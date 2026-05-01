@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Fort Android</string>
+    <string name="webview_renderer_failed_message">Fort Android hit a renderer failure and stopped after a bounded recovery attempt.</string>
+    <string name="webview_unsupported_message">Fort Android requires a WebView implementation that supports the secure message-listener bridge.</string>
+</resources>
