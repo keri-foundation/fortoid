@@ -40,6 +40,7 @@ Repeatable CLI validation:
 ```sh
 ./gradlew :app:assembleDebug
 ./gradlew :app:installDebug
+./gradlew :app:lint
 ```
 
 Android Studio is useful for SDK management, sync, AVD setup, and debugger attach, but the Gradle CLI is the canonical validation path.
@@ -77,6 +78,14 @@ The Android shell is locked down around app-owned content.
 - The `WebView` disables file/content access and file-URL privilege escalation flags
 - Renderer loss is handled with bounded recovery through `onRenderProcessGone(...)`
 - Web contents debugging is enabled only when the app itself is debuggable
+
+Low-friction security checks already fit this repo well:
+
+- `./gradlew :app:lint` for Android's built-in static checks on manifest, WebView, and platform API usage
+- `./gradlew dependencyCheckAnalyze` as an optional, slower OWASP dependency audit when you explicitly want a vulnerability report
+
+The intended workflow is to keep wrapper-specific hardening in Kotlin and use `:app:lint` as the fast default.
+The OWASP dependency audit should run on demand or on a scheduled CI lane because the first update can take a long time without an NVD API key.
 
 ## Native Branding Scope
 
