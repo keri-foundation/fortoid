@@ -17,7 +17,7 @@ The shared payload owns wallet UI, routing, storage semantics, and Pyodide-backe
 
 The Android lane is intentionally small and boring.
 
-1. [MainActivity.kt](app/src/main/java/org/kerifoundation/fortandroid/MainActivity.kt) creates a single `WebView` and loads the app-owned payload from `https://appassets.androidplatform.net/assets/payload/index.html`.
+1. [MainActivity.kt](app/src/main/java/org/kerifoundation/fortandroid/MainActivity.kt) creates a single `WebView` and loads the app-owned payload from `https://appassets.androidplatform.net/index.html`.
 2. [WebViewAssetLoader](https://developer.android.com/reference/androidx/webkit/WebViewAssetLoader) serves the generated assets from [app/src/main/assets/payload/](app/src/main/assets/payload/) under an HTTPS origin instead of `file://` and falls back to a local placeholder page until the payload is generated.
 3. The JS-to-Android bridge uses `WebViewCompat.addWebMessageListener(...)` and the injected `window.bridge` object; Android does not use `addJavascriptInterface(...)`.
 4. Bridge message names and worker command/result constants come from the generated [BridgeContract.kt](app/src/main/java/org/kerifoundation/fort/bridge/BridgeContract.kt) file so Android stays aligned with the shared TypeScript contract.
@@ -87,7 +87,7 @@ What [sync-payload.sh](sync-payload.sh) does:
 
 Refresh prerequisites:
 
-- either a sibling FortWeb checkout at `libs/fortweb` or `--fetch` access to the configured FortWeb git remote
+- either a sibling FortWeb checkout at `../fortweb` or `--fetch` access to the configured FortWeb git remote
 - workspace Fort-ios checkout for shared tooling and generated bridge constants
 
 The default fetch ref is pinned to FortWeb commit `214643f4fa907061334c09c8297c4d1e59f18f45` because there is not yet a published FortWeb tag for this payload contract.
