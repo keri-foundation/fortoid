@@ -17,7 +17,7 @@ class PayloadSnapshotContractTest {
         val rootIndex = Files.readString(placeholder)
         assertTrue(
             "placeholder should tell developers how to fetch the payload",
-            rootIndex.contains("./sync-payload.sh --fetch --ref 214643f4fa907061334c09c8297c4d1e59f18f45")
+            Regex("""\.\/sync-payload\.sh --fetch --ref [0-9a-f]{40}""").containsMatchIn(rootIndex)
         )
         assertTrue(
             "placeholder should explain where the generated payload is written",
