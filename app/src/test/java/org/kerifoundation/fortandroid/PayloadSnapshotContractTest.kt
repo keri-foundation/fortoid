@@ -14,14 +14,14 @@ class PayloadSnapshotContractTest {
 
         assertTrue("payload-missing placeholder should exist", Files.isRegularFile(placeholder))
 
-        val rootIndex = Files.readString(placeholder)
+        val placeholderHtml = Files.readString(placeholder)
         assertTrue(
             "placeholder should tell developers how to fetch the payload",
-            Regex("""\.\/sync-payload\.sh --fetch --ref [0-9a-f]{40}""").containsMatchIn(rootIndex)
+            Regex("""\.\/sync-payload\.sh --fetch --ref [0-9a-f]{40}""").containsMatchIn(placeholderHtml)
         )
         assertTrue(
             "placeholder should explain where the generated payload is written",
-            rootIndex.contains("app/src/main/assets/payload/")
+            placeholderHtml.contains("app/src/main/assets/payload/")
         )
     }
 
