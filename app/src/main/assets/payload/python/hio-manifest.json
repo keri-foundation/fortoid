@@ -1,0 +1,23 @@
+{
+  "dirs": [
+    "base",
+    "core",
+    "core/http",
+    "help"
+  ],
+  "files": [
+    "__init__.py",
+    "base/__init__.py",
+    "base/basing.py",
+    "base/doing.py",
+    "base/tyming.py",
+    "core/__init__.py",
+    "core/http/__init__.py",
+    "core/http/httping.py",
+    "help/__init__.py",
+    "help/helping.py",
+    "help/hicting.py",
+    "help/timing.py",
+    "hioing.py"
+  ]
+}

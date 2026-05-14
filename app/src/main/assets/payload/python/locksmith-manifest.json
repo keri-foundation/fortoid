@@ -1,0 +1,9 @@
+{
+  "dirs": [
+    "core"
+  ],
+  "files": [
+    "__init__.py",
+    "core/crypto.py"
+  ]
+}
