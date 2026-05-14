@@ -20,7 +20,7 @@ object BridgeContract {
 
     // ── Bridge Handler ──────────────────────────────────────────────────────
 
-    /** Injected bridge object name — must match JS: `window.bridge`. */
+    /** JS-visible bridge object name — must match the host-exposed `window.bridge` surface. */
     const val HANDLER_NAME = "bridge"
 
     // ── Lifecycle States ──────────────────────────────────────────────────
@@ -44,7 +44,6 @@ object BridgeContract {
     const val BRIDGE_JS_ERROR = "js_error"
     const val BRIDGE_UNHANDLED_REJECTION = "unhandled_rejection"
     const val BRIDGE_LOG = "log"
-    const val BRIDGE_DIAGNOSTICS = "diagnostics"
     const val BRIDGE_LIFECYCLE = "lifecycle"
     const val BRIDGE_CRYPTO_RESULT = "crypto_result"
 
@@ -52,7 +51,6 @@ object BridgeContract {
         BRIDGE_JS_ERROR,
         BRIDGE_UNHANDLED_REJECTION,
         BRIDGE_LOG,
-        BRIDGE_DIAGNOSTICS,
         BRIDGE_LIFECYCLE,
         BRIDGE_CRYPTO_RESULT,
     )
@@ -63,22 +61,18 @@ object BridgeContract {
     const val WORKER_CMD_BLAKE3_HASH = "blake3_hash"
     const val WORKER_CMD_SIGN = "sign"
     const val WORKER_CMD_VERIFY = "verify"
-    const val WORKER_CMD_LOCKSMITH_STRETCH_PASSWORD = "locksmith_stretch_password"
-    const val WORKER_CMD_DB_PUT = "db_put"
-    const val WORKER_CMD_DB_GET = "db_get"
-    const val WORKER_CMD_DB_DEL = "db_del"
-    const val WORKER_CMD_DB_LIST = "db_list"
+    const val WORKER_CMD_DB_SAVE = "db_save"
+    const val WORKER_CMD_DB_LOAD = "db_load"
+    const val WORKER_CMD_DB_DELETE = "db_delete"
 
     val ALL_WORKER_COMMAND_TYPES = listOf(
         WORKER_CMD_INIT,
         WORKER_CMD_BLAKE3_HASH,
         WORKER_CMD_SIGN,
         WORKER_CMD_VERIFY,
-        WORKER_CMD_LOCKSMITH_STRETCH_PASSWORD,
-        WORKER_CMD_DB_PUT,
-        WORKER_CMD_DB_GET,
-        WORKER_CMD_DB_DEL,
-        WORKER_CMD_DB_LIST,
+        WORKER_CMD_DB_SAVE,
+        WORKER_CMD_DB_LOAD,
+        WORKER_CMD_DB_DELETE,
     )
 
     // ── Worker Result Types (worker → main) ──────────────────────────────
@@ -87,13 +81,10 @@ object BridgeContract {
     const val WORKER_RES_BLAKE3_RESULT = "blake3_result"
     const val WORKER_RES_SIGN_RESULT = "sign_result"
     const val WORKER_RES_VERIFY_RESULT = "verify_result"
-    const val WORKER_RES_LOCKSMITH_STRETCH_PASSWORD_RESULT = "locksmith_stretch_password_result"
-    const val WORKER_RES_DB_PUT_RESULT = "db_put_result"
-    const val WORKER_RES_DB_GET_RESULT = "db_get_result"
-    const val WORKER_RES_DB_DEL_RESULT = "db_del_result"
-    const val WORKER_RES_DB_LIST_RESULT = "db_list_result"
+    const val WORKER_RES_DB_SAVE_RESULT = "db_save_result"
+    const val WORKER_RES_DB_LOAD_RESULT = "db_load_result"
+    const val WORKER_RES_DB_DELETE_RESULT = "db_delete_result"
     const val WORKER_RES_ERROR = "error"
-    const val WORKER_RES_DIAGNOSTICS = "diagnostics"
     const val WORKER_RES_LOG = "log"
 
     val ALL_WORKER_RESULT_TYPES = listOf(
@@ -101,13 +92,10 @@ object BridgeContract {
         WORKER_RES_BLAKE3_RESULT,
         WORKER_RES_SIGN_RESULT,
         WORKER_RES_VERIFY_RESULT,
-        WORKER_RES_LOCKSMITH_STRETCH_PASSWORD_RESULT,
-        WORKER_RES_DB_PUT_RESULT,
-        WORKER_RES_DB_GET_RESULT,
-        WORKER_RES_DB_DEL_RESULT,
-        WORKER_RES_DB_LIST_RESULT,
+        WORKER_RES_DB_SAVE_RESULT,
+        WORKER_RES_DB_LOAD_RESULT,
+        WORKER_RES_DB_DELETE_RESULT,
         WORKER_RES_ERROR,
-        WORKER_RES_DIAGNOSTICS,
         WORKER_RES_LOG,
     )
 }

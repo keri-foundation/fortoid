@@ -16,3 +16,11 @@ captures/
 .DS_Store
 .cursorignore
 .cursorindexingignore
+
+# Ignore the obsolete root-level FortWeb staging lane.
+app/src/main/assets/fortweb/
+app/src/main/assets/index.html
+app/src/main/assets/build-manifest.json
+
+# The Android payload is generated locally via ./sync-payload.sh and is not committed.
+app/src/main/assets/payload/

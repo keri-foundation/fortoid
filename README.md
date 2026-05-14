@@ -8,7 +8,8 @@ The shared payload owns wallet UI, routing, storage semantics, and Pyodide-backe
 
 - A conventional single-module Android app under [app/](app/)
 - The native host activity in [app/src/main/java/org/kerifoundation/fortandroid/MainActivity.kt](app/src/main/java/org/kerifoundation/fortandroid/MainActivity.kt)
-- The committed shared payload snapshot in [app/src/main/assets/payload/](app/src/main/assets/payload/)
+- The bundled missing-payload placeholder in [app/src/main/assets/bootstrap/payload-missing.html](app/src/main/assets/bootstrap/payload-missing.html)
+- The generated local payload output directory in [app/src/main/assets/payload/](app/src/main/assets/payload/)
 - The generated Kotlin bridge constants in [app/src/main/java/org/kerifoundation/fort/bridge/BridgeContract.kt](app/src/main/java/org/kerifoundation/fort/bridge/BridgeContract.kt)
 - The payload refresh helper in [sync-payload.sh](sync-payload.sh)
 
@@ -16,16 +17,30 @@ The shared payload owns wallet UI, routing, storage semantics, and Pyodide-backe
 
 The Android lane is intentionally small and boring.
 
-1. [MainActivity.kt](app/src/main/java/org/kerifoundation/fortandroid/MainActivity.kt) creates a single `WebView` and loads the app-owned payload from `https://appassets.androidplatform.net/assets/payload/index.html`.
-2. [WebViewAssetLoader](https://developer.android.com/reference/androidx/webkit/WebViewAssetLoader) serves the committed assets from [app/src/main/assets/payload/](app/src/main/assets/payload/) under an HTTPS origin instead of `file://`.
+1. [MainActivity.kt](app/src/main/java/org/kerifoundation/fortandroid/MainActivity.kt) creates a single `WebView` and loads the app-owned payload from `https://appassets.androidplatform.net/index.html`.
+2. [WebViewAssetLoader](https://developer.android.com/reference/androidx/webkit/WebViewAssetLoader) serves the generated assets from [app/src/main/assets/payload/](app/src/main/assets/payload/) under an HTTPS origin instead of `file://` and falls back to a local placeholder page until the payload is generated.
 3. The JS-to-Android bridge uses `WebViewCompat.addWebMessageListener(...)` and the injected `window.bridge` object; Android does not use `addJavascriptInterface(...)`.
 4. Bridge message names and worker command/result constants come from the generated [BridgeContract.kt](app/src/main/java/org/kerifoundation/fort/bridge/BridgeContract.kt) file so Android stays aligned with the shared TypeScript contract.
 5. The Android host may send a bounded smoke-test command after the payload reaches `ready` to prove the host -> web -> worker -> host path is alive, but product logic remains in the shared payload.
 
 ## Build And Run
 
-Normal Android development is self-contained.
-You do not need a sibling `Fort-ios` checkout just to clone this repo, open it in Android Studio, and run the app.
+This repo no longer commits the full generated FortWeb payload tree.
+Before the first local run, generate the payload once with [sync-payload.sh](sync-payload.sh).
+
+Quick start:
+
+```sh
+./sync-payload.sh --fetch --ref 214643f4fa907061334c09c8297c4d1e59f18f45
+./gradlew :app:assembleDebug
+./gradlew :app:installDebug
+```
+
+If you already have a sibling FortWeb checkout, you can build from that local source instead:
+
+```sh
+./sync-payload.sh --fortweb-dir ../fortweb
+```
 
 Current baseline:
 
@@ -47,23 +62,45 @@ Android Studio is useful for SDK management, sync, AVD setup, and debugger attac
 
 ## Shared Payload Refresh
 
-The current bundled wallet UI and Pyodide runtime originate from the active shared web lane in the sibling `Fort-ios` workspace repo.
-That dependency exists only when you intentionally refresh the committed Android payload snapshot.
+The supported shared payload source for Android is the canonical FortWeb-backed mobile payload contract.
+The payload is generated locally under [app/src/main/assets/payload/](app/src/main/assets/payload/) and stays out of git.
+The refresh script reads shared manifest-validation tooling and the generated Kotlin bridge contract from the workspace Fort-ios repo, but it no longer shells into the Fort-ios local payload builder.
 
 Refresh flow:
 
 ```sh
-./sync-payload.sh
+./sync-payload.sh --fetch --ref 214643f4fa907061334c09c8297c4d1e59f18f45
+```
+
+Local workspace flow:
+
+```sh
+./sync-payload.sh --fortweb-dir ../fortweb
 ```
 
 What [sync-payload.sh](sync-payload.sh) does:
 
-1. Calls the shared payload builder in the sibling `Fort-ios` repo
-2. Replaces the committed Android payload snapshot under [app/src/main/assets/payload/](app/src/main/assets/payload/)
+1. Uses either a local FortWeb checkout or `--fetch` to obtain the FortWeb web app source
+2. Generates the Android payload under [app/src/main/assets/payload/](app/src/main/assets/payload/)
 3. Copies the generated Kotlin bridge contract into [app/src/main/java/org/kerifoundation/fort/bridge/BridgeContract.kt](app/src/main/java/org/kerifoundation/fort/bridge/BridgeContract.kt)
 4. Verifies that `index.html`, `build-manifest.json`, and the generated bridge contract are present
 
-If the sibling `Fort-ios` checkout is missing, Android builds still work with the checked-in payload snapshot already in this repo.
+Refresh prerequisites:
+
+- either a sibling FortWeb checkout at `../fortweb` or `--fetch` access to the configured FortWeb git remote
+- workspace Fort-ios checkout for shared tooling and generated bridge constants
+
+The default fetch ref is pinned to FortWeb commit `214643f4fa907061334c09c8297c4d1e59f18f45` because there is not yet a published FortWeb tag for this payload contract.
+
+If the payload has not been generated yet, the app loads a small bundled placeholder page that tells the developer to run [sync-payload.sh](sync-payload.sh). The wrapper does not download runtime code from the network.
+
+### Current validation checkpoint
+
+The generated-payload lane was revalidated on 2026-04-28.
+
+- `./sync-payload.sh --fetch --ref main` generates a payload with `producer = fortweb-shared`, `payload_profile = product-shell`, and `entry_document = fortweb/app/index.html`
+- `./sync-payload.sh --fetch --ref 214643f4fa907061334c09c8297c4d1e59f18f45` generates a payload with `producer = fortweb-shared`, `payload_profile = product-shell`, and `entry_document = fortweb/app/index.html`
+- `./gradlew :app:testDebugUnitTest` passed after the bridge-contract refresh and placeholder fallback alignment
 
 ## Security Posture
 
@@ -102,9 +139,10 @@ The wallet UI itself continues to come from the shared payload, not from a separ
 
 - [app/src/main/java/org/kerifoundation/fortandroid/MainActivity.kt](app/src/main/java/org/kerifoundation/fortandroid/MainActivity.kt): WebView host, navigation policy, bridge listener, renderer recovery
 - [app/src/main/java/org/kerifoundation/fort/bridge/BridgeContract.kt](app/src/main/java/org/kerifoundation/fort/bridge/BridgeContract.kt): generated bridge constants shared with the TypeScript runtime
-- [app/src/main/assets/payload/](app/src/main/assets/payload/): committed shared web payload snapshot used at runtime
+- [app/src/main/assets/bootstrap/payload-missing.html](app/src/main/assets/bootstrap/payload-missing.html): bundled placeholder shown until the payload is generated
+- [app/src/main/assets/payload/](app/src/main/assets/payload/): generated local payload output used at runtime after [sync-payload.sh](sync-payload.sh) runs
 - [app/src/main/res/](app/src/main/res/): launcher icon, theme, layout, and string resources
-- [sync-payload.sh](sync-payload.sh): refresh the Android-bundled payload from the shared workspace lane
+- [sync-payload.sh](sync-payload.sh): fetch or stage FortWeb and generate the Android-bundled payload locally using shared mobile tooling
 - [app/build.gradle.kts](app/build.gradle.kts): app module config
 - [gradle/libs.versions.toml](gradle/libs.versions.toml): dependency versions including `androidx.webkit`
 
@@ -117,13 +155,13 @@ That is treated as an unsupported runtime, not as a reason to fall back to a wea
 
 ### Payload refresh fails
 
-If `./sync-payload.sh` fails because the sibling `Fort-ios` checkout is missing, that only blocks payload refresh work.
-It does not block normal Android builds that use the committed snapshot already in this repo.
+If `./sync-payload.sh` fails because the sibling FortWeb checkout, the fetch remote, or the shared mobile tooling checkout is unavailable, that blocks payload generation until the input is fixed.
+The app will still boot to the local placeholder page, but it will not run the real wallet payload until the sync step succeeds.
 
 ### Node version warnings during payload refresh
 
-The shared payload builder may warn if the local Node version does not match the shared web lane's pinned engine.
-That warning comes from the payload refresh workflow, not from Android runtime behavior.
+The refresh path runs shared Node-based manifest and payload-validation tooling from the workspace mobile repos.
+If that tooling warns or fails on a local Node mismatch, treat it as a payload-generation issue, not as Android runtime behavior.
 
 ### Renderer failure message
 

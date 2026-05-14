@@ -320,8 +320,6 @@ class MainActivity : AppCompatActivity() {
                 "bridge log=${boundedLogValue(envelope.optString("message"))}"
             )
 
-            BridgeContract.BRIDGE_DIAGNOSTICS -> handleDiagnosticsMessage(envelope)
-
             BridgeContract.BRIDGE_JS_ERROR, BridgeContract.BRIDGE_UNHANDLED_REJECTION -> Log.e(
                 LOG_TAG,
                 "bridge $type=${boundedLogValue(envelope.optString("message"))}"
@@ -340,31 +338,6 @@ class MainActivity : AppCompatActivity() {
         if (message == BridgeContract.LIFECYCLE_READY && !nativeProofDispatched) {
             nativeProofDispatched = true
             dispatchNativeProofCommand()
-        }
-    }
-
-    private fun handleDiagnosticsMessage(envelope: JSONObject) {
-        val component = boundedLogValue(envelope.optString("component"))
-        val level = envelope.optString("level").ifBlank { "info" }
-        val phase = boundedLogValue(envelope.optString("phase"))
-        val message = boundedLogValue(envelope.optString("message"))
-        val detail = boundedLogValue(envelope.optString("detail"))
-        val context = envelope.optJSONObject("context")?.toString()?.let(::boundedLogValue).orEmpty()
-
-        val line = buildString {
-            append("bridge diagnostics")
-            if (component.isNotBlank()) append(" component=").append(component)
-            if (phase.isNotBlank()) append(" phase=").append(phase)
-            append(" message=").append(message)
-            if (detail.isNotBlank()) append(" detail=").append(detail)
-            if (context.isNotBlank()) append(" context=").append(context)
-        }
-
-        when (level) {
-            "error" -> Log.e(LOG_TAG, line)
-            "warn" -> Log.w(LOG_TAG, line)
-            "debug" -> Log.d(LOG_TAG, line)
-            else -> Log.i(LOG_TAG, line)
         }
     }
 

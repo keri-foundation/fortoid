@@ -7,13 +7,17 @@ import org.kerifoundation.fort.bridge.BridgeContract
 
 class BridgeContractTest {
     @Test
-    fun bridgeMessageTypesIncludeDiagnostics() {
-        assertTrue(BridgeContract.ALL_BRIDGE_MESSAGE_TYPES.contains(BridgeContract.BRIDGE_DIAGNOSTICS))
+    fun bridgeMessageTypesMatchSharedContract() {
+        assertTrue(BridgeContract.ALL_BRIDGE_MESSAGE_TYPES.contains(BridgeContract.BRIDGE_LIFECYCLE))
+        assertTrue(BridgeContract.ALL_BRIDGE_MESSAGE_TYPES.contains(BridgeContract.BRIDGE_LOG))
+        assertTrue(BridgeContract.ALL_BRIDGE_MESSAGE_TYPES.contains(BridgeContract.BRIDGE_CRYPTO_RESULT))
     }
 
     @Test
-    fun workerResultTypesIncludeDiagnostics() {
-        assertTrue(BridgeContract.ALL_WORKER_RESULT_TYPES.contains(BridgeContract.WORKER_RES_DIAGNOSTICS))
+    fun workerResultTypesMatchSharedContract() {
+        assertTrue(BridgeContract.ALL_WORKER_RESULT_TYPES.contains(BridgeContract.WORKER_RES_READY))
+        assertTrue(BridgeContract.ALL_WORKER_RESULT_TYPES.contains(BridgeContract.WORKER_RES_BLAKE3_RESULT))
+        assertTrue(BridgeContract.ALL_WORKER_RESULT_TYPES.contains(BridgeContract.WORKER_RES_ERROR))
     }
 
     @Test
