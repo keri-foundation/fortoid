@@ -52,6 +52,12 @@ class SyncPayloadScriptContractTest {
             script.contains("--build-command './sync-payload.sh'")
         )
         assertTrue(
+            "sync-payload.sh should normalize an android sync target into build-manifest.json",
+            script.contains("\"id\": \"android-asset-payload\"") &&
+                script.contains("\"path\": \"app/src/main/assets/payload\"") &&
+                script.contains("redirect_root_to_fortweb_app")
+        )
+        assertTrue(
             "sync-payload.sh should validate the final Android payload",
             script.contains("--target android-asset-payload")
         )

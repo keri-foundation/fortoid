@@ -165,6 +165,30 @@ node "${FORTWEB_MANIFEST_TOOL}" \
   --fortweb-dir "${FORTWEB_SOURCE_DIR}" \
   --build-command './sync-payload.sh'
 
+MANIFEST_PATH="${WRAPPER_PAYLOAD_DIR}/build-manifest.json" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+manifest_path = Path(os.environ["MANIFEST_PATH"])
+manifest = json.loads(manifest_path.read_text())
+expected_target = {
+    "id": "android-asset-payload",
+    "path": "app/src/main/assets/payload",
+    "mutations": ["redirect_root_to_fortweb_app"],
+}
+
+sync_targets = manifest.setdefault("sync_targets", [])
+for index, entry in enumerate(sync_targets):
+    if entry.get("id") == expected_target["id"]:
+        sync_targets[index] = expected_target
+        break
+else:
+    sync_targets.append(expected_target)
+
+manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+PY
+
 node "${PAYLOAD_VALIDATOR}" \
   --payload-dir "${WRAPPER_PAYLOAD_DIR}" \
   --target android-asset-payload
