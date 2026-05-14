@@ -527,7 +527,15 @@ class MainActivity : AppCompatActivity() {
             if (localPyodideUri != null) {
                 Log.i(LOG_TAG, "Pyodide CDN redirect: ${request.url.path} -> ${localPyodideUri.path}")
                 val response = assetLoader.shouldInterceptRequest(localPyodideUri)
-                return response?.let { addCdnRedirectHeaders(it) }
+                if (response != null) {
+                    return addCdnRedirectHeaders(response)
+                }
+
+                Log.w(
+                    LOG_TAG,
+                    "Missing bundled Pyodide asset for mapped request url=${boundedLogValue(request.url.toString())} local=${boundedLogValue(localPyodideUri.toString())}"
+                )
+                return createBlockedSubresourceResponse()
             }
 
             if (WebRequestPolicy.shouldBlockSubresource(request.url, request.isForMainFrame)) {

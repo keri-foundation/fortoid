@@ -27,6 +27,7 @@ The Android lane is intentionally small and boring.
 
 This repo no longer commits the full generated FortWeb payload tree.
 Before the first local run, generate the payload once with [sync-payload.sh](sync-payload.sh).
+The fetch-based refresh flow still depends on the workspace [Fort-ios](../Fort-ios/README.md) checkout because Android reuses its shared manifest-validation and bridge-contract tooling.
 
 Quick start:
 

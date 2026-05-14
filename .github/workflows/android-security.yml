@@ -1,5 +1,8 @@
 name: Android Security Checks
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
@@ -7,6 +10,7 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle/**'
+      - 'sync-payload.sh'
       - '.github/workflows/android-security.yml'
   push:
     branches:
@@ -16,6 +20,7 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle/**'
+      - 'sync-payload.sh'
       - '.github/workflows/android-security.yml'
   workflow_dispatch:
   schedule:
@@ -41,6 +46,9 @@ jobs:
 
       - name: Run Android lint
         run: ./gradlew :app:lint --no-daemon
+
+      - name: Run JVM unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
 
       - name: Upload lint reports
         if: always()

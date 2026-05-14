@@ -43,20 +43,33 @@ cleanup() {
 
 trap cleanup EXIT
 
+require_option_value() {
+  local option_name="$1"
+
+  if [[ $# -lt 2 || -z "${2-}" ]]; then
+    echo "error: ${option_name} requires a value" 1>&2
+    usage 1>&2
+    exit 1
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --fetch)
       FETCH_MODE=1
       ;;
     --ref)
+      require_option_value "$1" "${2-}"
       FORTWEB_REF="$2"
       shift
       ;;
     --remote)
+      require_option_value "$1" "${2-}"
       FORTWEB_REMOTE="$2"
       shift
       ;;
     --fortweb-dir)
+      require_option_value "$1" "${2-}"
       FORTWEB_DIR="$2"
       shift
       ;;
