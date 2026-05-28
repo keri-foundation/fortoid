@@ -61,6 +61,17 @@ Repeatable CLI validation:
 
 Android Studio is useful for SDK management, sync, AVD setup, and debugger attach, but the Gradle CLI is the canonical validation path.
 
+If Android Studio can see the SDK but your terminal cannot find `adb`, use the repo-local preflight helper first:
+
+```sh
+./scripts/android-preflight.sh
+eval "$(./scripts/android-preflight.sh --print-exports)"
+./gradlew :app:connectedDebugAndroidTest
+```
+
+The helper resolves the SDK in this order: `local.properties` `sdk.dir`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk`.
+It prints the exact export lines for the current shell, reports `adb devices -l`, lists AVDs when no target is connected, and exits non-zero when `adb` is missing, the SDK environment is inconsistent, or no authorized emulator or device is available.
+
 ## Shared Payload Refresh
 
 The supported shared payload source for Android is the canonical FortWeb-backed mobile payload contract.
