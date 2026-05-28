@@ -85,6 +85,17 @@ internal object WebRequestPolicy {
         return !isMainFrame
     }
 
+    internal fun shouldOpenExternallyParts(scheme: String?, host: String?, path: String?): Boolean {
+        if (isTrustedPayloadParts(scheme, host, path)) return false
+
+        return scheme == TRUSTED_SCHEME
+    }
+
+    fun shouldOpenExternally(uri: Uri?): Boolean {
+        if (uri == null) return false
+        return shouldOpenExternallyParts(uri.scheme, uri.host, uri.path)
+    }
+
     /**
      * Redirect Pyodide CDN requests to the bundled local copy so the wrapper stays offline.
      */
@@ -564,7 +575,7 @@ class MainActivity : AppCompatActivity() {
                 return false
             }
 
-            if (uri.scheme == TRUSTED_SCHEME) {
+            if (WebRequestPolicy.shouldOpenExternally(uri)) {
                 handleExternalNavigation(uri)
             }
 

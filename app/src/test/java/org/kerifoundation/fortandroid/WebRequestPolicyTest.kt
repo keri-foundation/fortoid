@@ -79,4 +79,44 @@ class WebRequestPolicyTest {
             )
         )
     }
+
+    @Test
+    fun offOriginHttpsNavigationIsOpenedExternally() {
+        assertTrue(
+            WebRequestPolicy.shouldOpenExternallyParts(
+                scheme = "https",
+                host = "example.com",
+                path = "/docs"
+            )
+        )
+    }
+
+    @Test
+    fun trustedPayloadNavigationIsNotOpenedExternally() {
+        assertFalse(
+            WebRequestPolicy.shouldOpenExternallyParts(
+                scheme = "https",
+                host = "appassets.androidplatform.net",
+                path = "/fortweb/app/index.html"
+            )
+        )
+    }
+
+    @Test
+    fun nonHttpsNavigationIsNotOpenedExternally() {
+        assertFalse(
+            WebRequestPolicy.shouldOpenExternallyParts(
+                scheme = "http",
+                host = "example.com",
+                path = "/docs"
+            )
+        )
+        assertFalse(
+            WebRequestPolicy.shouldOpenExternallyParts(
+                scheme = "mailto",
+                host = null,
+                path = "test@example.com"
+            )
+        )
+    }
 }
