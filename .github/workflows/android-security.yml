@@ -5,23 +5,9 @@ permissions:
 
 on:
   pull_request:
-    paths:
-      - 'app/**'
-      - 'build.gradle.kts'
-      - 'settings.gradle.kts'
-      - 'gradle/**'
-      - 'sync-payload.sh'
-      - '.github/workflows/android-security.yml'
   push:
     branches:
       - main
-    paths:
-      - 'app/**'
-      - 'build.gradle.kts'
-      - 'settings.gradle.kts'
-      - 'gradle/**'
-      - 'sync-payload.sh'
-      - '.github/workflows/android-security.yml'
   workflow_dispatch:
   schedule:
     - cron: '0 9 * * 1'
@@ -44,11 +30,11 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Run Android local unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
       - name: Run Android lint
         run: ./gradlew :app:lint --no-daemon
-
-      - name: Run JVM unit tests
-        run: ./gradlew :app:testDebugUnitTest --no-daemon
 
       - name: Upload lint reports
         if: always()
@@ -57,6 +43,23 @@ jobs:
           name: android-lint-reports
           path: |
             app/build/reports/
+
+  secrets:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/repo" \
+            -w /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git --no-banner --redact --exit-code 1 .
 
   dependency-audit:
     runs-on: ubuntu-latest

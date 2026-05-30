@@ -132,6 +132,7 @@ Low-friction security checks already fit this repo well:
 
 - `./gradlew :app:lint` for Android's built-in static checks on manifest, WebView, and platform API usage
 - `./gradlew dependencyCheckAnalyze` as an optional, slower OWASP dependency audit when you explicitly want a vulnerability report
+- CI secrets scanning for accidental key, token, and credential commits
 
 The intended workflow is to keep wrapper-specific hardening in Kotlin and use `:app:lint` as the fast default.
 The OWASP dependency audit should run on demand or on a scheduled CI lane because the first update can take a long time without an NVD API key.

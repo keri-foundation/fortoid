@@ -65,6 +65,35 @@ class WebRequestPolicyTest {
     }
 
     @Test
+    fun trustedPayloadPartsRequireExactOrigin() {
+        assertTrue(
+            WebRequestPolicy.isTrustedPayloadParts(
+                scheme = "https",
+                host = "appassets.androidplatform.net",
+                path = "/index.html"
+            )
+        )
+        assertFalse(
+            WebRequestPolicy.isTrustedPayloadParts(
+                scheme = "https",
+                host = "appassets.androidplatform.net.evil",
+                path = "/index.html"
+            )
+        )
+    }
+
+    @Test
+    fun trustedPayloadPartsRequireNonNullPath() {
+        assertFalse(
+            WebRequestPolicy.isTrustedPayloadParts(
+                scheme = "https",
+                host = "appassets.androidplatform.net",
+                path = null
+            )
+        )
+    }
+
+    @Test
     fun bridgeOriginRequiresTrustedSchemeAndHost() {
         assertTrue(
             WebRequestPolicy.isTrustedBridgeParts(
@@ -76,6 +105,22 @@ class WebRequestPolicyTest {
             WebRequestPolicy.isTrustedBridgeParts(
                 scheme = "https",
                 host = "example.com"
+            )
+        )
+    }
+
+    @Test
+    fun trustedBridgePartsRequireExactOrigin() {
+        assertFalse(
+            WebRequestPolicy.isTrustedBridgeParts(
+                scheme = "http",
+                host = "appassets.androidplatform.net"
+            )
+        )
+        assertFalse(
+            WebRequestPolicy.isTrustedBridgeParts(
+                scheme = "https",
+                host = "appassets.androidplatform.net.evil"
             )
         )
     }
