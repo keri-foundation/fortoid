@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>KERI Wallet Payload Missing</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "SF Pro Text", "Segoe UI", sans-serif;
+      background: #f7f8f4;
+      color: #172317;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: linear-gradient(180deg, #f7f8f4 0%, #eef2e8 100%);
+    }
+
+    main {
+      width: min(680px, 100%);
+      padding: 24px;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 18px 60px rgba(23, 35, 23, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 28px;
+      line-height: 1.1;
+    }
+
+    p {
+      margin: 0 0 14px;
+      line-height: 1.5;
+    }
+
+    pre {
+      overflow-x: auto;
+      padding: 14px;
+      border-radius: 16px;
+      background: #172317;
+      color: #f7f8f4;
+      font-size: 14px;
+    }
+
+    code {
+      font-family: "SF Mono", "Cascadia Code", monospace;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>FortWeb payload has not been generated yet.</h1>
+    <p>This Android wrapper no longer commits the full shared web payload into git.</p>
+    <p>Before running the app, generate the local payload bundle with one of these commands:</p>
+    <pre><code>./sync-payload.sh --fetch --ref 214643f4fa907061334c09c8297c4d1e59f18f45
+./sync-payload.sh --fortweb-dir ../fortweb</code></pre>
+    <p>The generated output is written to <code>app/src/main/assets/payload/</code> and stays local.</p>
+  </main>
+</body>
+</html>
