@@ -153,6 +153,11 @@ if [[ ! -f "${FORTWEB_DIR}/dist/runtime/app/app/main.js" ]]; then
   exit 1
 fi
 
+# build-runtime.mjs does not bundle static web assets; copy them now
+cp "${FORTWEB_DIR}/app/index.html" "${FORTWEB_DIR}/dist/runtime/app/index.html"
+cp -R "${FORTWEB_DIR}/app/styles" "${FORTWEB_DIR}/dist/runtime/app/styles"
+cp -R "${FORTWEB_DIR}/app/assets" "${FORTWEB_DIR}/dist/runtime/app/assets"
+
 if [[ ! -f "${FORTWEB_DIR}/dist/runtime/app/index.html" ]]; then
   echo "error: entry HTML not found in dist/runtime" 1>&2
   exit 1
@@ -222,6 +227,34 @@ if [[ ! -f "${ANDROID_PAYLOAD_DIR}/fortweb/app/app/main.js" ]]; then
   echo "error: compiled main.js missing after staging" 1>&2
   exit 1
 fi
+
+# Generate runtime-origin contract (injected at runtime by MainActivity.kt;
+# this file is a build-time manifest for CI validation)
+cat > "${ANDROID_PAYLOAD_DIR}/fortweb/app/runtime-origin-contract.json" <<CONTRACT
+{
+  "schema": "fortweb.runtime-origin.v1",
+  "version": 1,
+  "platform": "android-webview",
+  "mode": "bundled-offline",
+  "documentOrigin": "https://appassets.androidplatform.net",
+  "appBaseUrl": "https://appassets.androidplatform.net",
+  "entryUrl": "https://appassets.androidplatform.net/index.html",
+  "workerUrl": "https://appassets.androidplatform.net/fortweb/app/runtime/wallet-worker.py",
+  "configUrl": "https://appassets.androidplatform.net/fortweb/pyscript-ci.toml",
+  "storage": {
+    "storageNamespace": "fort-webview",
+    "indexedDbRequired": true,
+    "originPartition": "fort-webview"
+  },
+  "capabilities": {
+    "customScheme": true,
+    "httpsLikeAssetOrigin": true,
+    "implicitBlobOriginSafe": true,
+    "networkAllowed": false,
+    "bundledAssetsOnly": true
+  }
+}
+CONTRACT
 
 if [[ ! -f "${ANDROID_PAYLOAD_DIR}/fortweb/app/runtime-origin-contract.json" ]]; then
   echo "error: runtime-origin contract missing after staging" 1>&2
