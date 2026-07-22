@@ -1,22 +1,22 @@
 {
   "schema": "fortweb.runtime-origin.v1",
   "version": 1,
-  "platform": "ios-wkwebview",
+  "platform": "android-webview",
   "mode": "bundled-offline",
-  "documentOrigin": "app://local",
-  "appBaseUrl": "app://local",
-  "entryUrl": "app://local/fortweb/app/index.html",
-  "workerUrl": "app://local/fortweb/app/runtime/wallet-worker.py",
-  "configUrl": "app://local/fortweb/pyscript-ci.toml",
+  "documentOrigin": "https://appassets.androidplatform.net",
+  "appBaseUrl": "https://appassets.androidplatform.net",
+  "entryUrl": "https://appassets.androidplatform.net/index.html",
+  "workerUrl": "https://appassets.androidplatform.net/fortweb/app/runtime/wallet-worker.py",
+  "configUrl": "https://appassets.androidplatform.net/fortweb/pyscript-ci.toml",
   "storage": {
-    "storageNamespace": "keri-wallet-ios",
+    "storageNamespace": "fort-webview",
     "indexedDbRequired": true,
-    "originPartition": "app://local/"
+    "originPartition": "https://appassets.androidplatform.net"
   },
   "capabilities": {
     "customScheme": true,
-    "httpsLikeAssetOrigin": false,
-    "implicitBlobOriginSafe": false,
+    "httpsLikeAssetOrigin": true,
+    "implicitBlobOriginSafe": true,
     "networkAllowed": false,
     "bundledAssetsOnly": true
   }

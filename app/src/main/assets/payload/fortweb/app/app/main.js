@@ -457,10 +457,10 @@ window.addEventListener("beforeunload", () => {
 });
 async function bootstrap() {
     installGlobalHandlers();
+    initDrawer([]);
     await render();
     try {
         await actions.refreshVaults();
-        initDrawer(currentState().vaults);
         await render();
     }
     catch (error) {
