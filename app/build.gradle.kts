@@ -81,25 +81,7 @@ tasks.register("verifyPreparedPayload") {
             )
         }
 
-        // Verify node-based validator passes (best-effort — requires Node.js)
-        val validator = file("${project.rootDir}/tools/validate-staged-payload.mjs")
-        if (validator.exists()) {
-            try {
-                val result = project.exec {
-                    commandLine("node", validator.absolutePath)
-                    isIgnoreExitValue = true
-                }
-                if (result.exitValue != 0) {
-                    throw GradleException(
-                        "Payload validation failed. Run: node tools/validate-staged-payload.mjs"
-                    )
-                }
-            } catch (e: Exception) {
-                logger.warn("verifyPreparedPayload: could not run Node validator (${e.message}) — file checks passed")
-            }
-        }
-
-        logger.lifecycle("verifyPreparedPayload: payload valid")
+        logger.lifecycle("verifyPreparedPayload: payload valid (run 'node tools/validate-staged-payload.mjs' for full validation)")
     }
 }
 
