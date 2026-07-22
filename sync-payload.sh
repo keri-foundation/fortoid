@@ -244,7 +244,7 @@ cat > "${ANDROID_PAYLOAD_DIR}/fortweb/app/runtime-origin-contract.json" <<CONTRA
   "storage": {
     "storageNamespace": "fort-webview",
     "indexedDbRequired": true,
-    "originPartition": "fort-webview"
+    "originPartition": "https://appassets.androidplatform.net"
   },
   "capabilities": {
     "customScheme": true,
