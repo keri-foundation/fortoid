@@ -1,0 +1,7 @@
+{
+  "schema": "fortoid.android-payload.v1",
+  "fortweb_commit": "91db558c58b0ec8235e06086a0dc885a484ee63d",
+  "runtime_file_count": 188,
+  "runtime_tree_sha256": "39cc21690bbd9db027cc58d76dbbfdd8cd1458ef586ee702f20974d9f857f3b7",
+  "entry_url": "./fortweb/app/index.html"
+}

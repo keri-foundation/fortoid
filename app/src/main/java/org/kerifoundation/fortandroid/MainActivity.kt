@@ -36,6 +36,7 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import java.io.ByteArrayOutputStream
 import org.kerifoundation.fort.bridge.BridgeContract
 import org.json.JSONException
 import org.json.JSONObject
@@ -176,7 +177,22 @@ class MainActivity : AppCompatActivity() {
         webView = freshWebView
 
         if (loadPayload) {
+            injectRuntimeOriginContract(freshWebView)
             freshWebView.loadUrl(PAYLOAD_URL)
+        }
+    }
+
+    private fun injectRuntimeOriginContract(webView: WebView) {
+        try {
+            val stream = assets.open("payload/fortweb/app/runtime-origin-contract.json")
+            val bytes = ByteArrayOutputStream()
+            stream.copyTo(bytes)
+            stream.close()
+            val contractJson = bytes.toString("UTF-8")
+            val script = "window.__FORT_RUNTIME_ORIGIN__ = $contractJson;"
+            WebViewCompat.addDocumentStartJavaScript(webView, script, setOf(TRUSTED_ORIGIN_RULE))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Could not inject runtime-origin contract", e)
         }
     }
 
