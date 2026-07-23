@@ -153,11 +153,6 @@ if [[ ! -f "${FORTWEB_DIR}/dist/runtime/app/app/main.js" ]]; then
   exit 1
 fi
 
-# build-runtime.mjs does not bundle static web assets; copy them now
-cp "${FORTWEB_DIR}/app/index.html" "${FORTWEB_DIR}/dist/runtime/app/index.html"
-cp -R "${FORTWEB_DIR}/app/styles" "${FORTWEB_DIR}/dist/runtime/app/styles"
-cp -R "${FORTWEB_DIR}/app/assets" "${FORTWEB_DIR}/dist/runtime/app/assets"
-
 if [[ ! -f "${FORTWEB_DIR}/dist/runtime/app/index.html" ]]; then
   echo "error: entry HTML not found in dist/runtime" 1>&2
   exit 1
