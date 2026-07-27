@@ -1,7 +1,7 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
-    <style name="Base.Theme.FortAndroid" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your dark theme here. -->
-        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+<resources>
+    <style name="Base.Theme.KeriWallet" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/keri_green</item>
+        <item name="colorSecondary">@color/keri_gold</item>
+        <item name="android:windowBackground">@color/keri_window_dark</item>
     </style>
 </resources>
