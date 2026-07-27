@@ -1,0 +1,69 @@
+name: Android JVM and Lint
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: android-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: JVM tests and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Quarantine staged payload
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import shutil
+
+          source = Path("app/src/main/assets/payload")
+          destination = Path(os.environ["RUNNER_TEMP"]) / "fortoid-staged-payload"
+
+          if destination.exists():
+              raise SystemExit(
+                  f"Unexpected quarantine destination already exists: {destination}"
+              )
+
+          if source.exists():
+              if source.is_symlink() or not source.is_dir():
+                  raise SystemExit(
+                      f"Unsafe staged-payload path: {source}"
+                  )
+              shutil.move(str(source), str(destination))
+
+          if source.exists():
+              raise SystemExit(
+                  "Staged payload still exists after quarantine"
+              )
+          PY
+
+      - name: Run JVM unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Run debug lint
+        run: ./gradlew :app:lintDebug --no-daemon
