@@ -325,7 +325,11 @@ actions = {
         }
         else {
             drawer.open();
-            actions.refreshVaults(currentState().unlockedVaultId, currentState().vaultSummary).catch(() => { });
+            void actions.refreshVaults(currentState().unlockedVaultId, currentState().vaultSummary).catch(() => {
+                // refreshVaults failure is surfaced through the bridge error
+                // path; this catch prevents an unhandled rejection when the
+                // drawer is opened before the worker is ready.
+            });
         }
     },
 };
