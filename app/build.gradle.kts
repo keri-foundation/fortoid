@@ -61,10 +61,10 @@ tasks.register("verifyPreparedPayload") {
 
     doLast {
         val payloadDir = file("src/main/assets/payload")
-        val manifestFile = file("src/main/assets/payload/android-payload-manifest.json")
-        val entryHtml = file("src/main/assets/payload/fortweb/app/index.html")
-        val mainJs = file("src/main/assets/payload/fortweb/app/app/main.js")
-        val originContract = file("src/main/assets/payload/fortweb/app/runtime-origin-contract.json")
+        val manifestFile = file("src/main/assets/payload/manifest.json")
+        val entryHtml = file("src/main/assets/payload/app/index.html")
+        val mainJs = file("src/main/assets/payload/app/app/main.js")
+        val requirementsContract = file("src/main/assets/payload/contracts/runtime-requirements.json")
 
         if (!payloadDir.exists()) {
             throw GradleException(
@@ -74,11 +74,11 @@ tasks.register("verifyPreparedPayload") {
 
         if (!manifestFile.exists()) {
             throw GradleException(
-                "android-payload-manifest.json missing. Run: ./sync-payload.sh --fortweb-dir <path>"
+                "manifest.json missing. Run: ./sync-payload.sh --fortweb-dir <path>"
             )
         }
 
-        if (!entryHtml.exists() || !mainJs.exists() || !originContract.exists()) {
+        if (!entryHtml.exists() || !mainJs.exists() || !requirementsContract.exists()) {
             throw GradleException(
                 "FortWeb runtime incomplete. Run: ./sync-payload.sh --fortweb-dir <path>"
             )

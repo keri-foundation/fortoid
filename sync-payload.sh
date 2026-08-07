@@ -161,101 +161,29 @@ fi
 RUNTIME_FILE_COUNT="$(find "${FORTWEB_DIR}/dist/runtime" -type f | wc -l | tr -d ' ')"
 echo "[sync-payload] FortWeb runtime: ${RUNTIME_FILE_COUNT} files"
 
-# ── Stage into Android payload ────────────────────────────────────────────────
+# ── Generate FortWeb runtime package ZIP ──────────────────────────────────────
 
-echo "[sync-payload] cleaning previous Android payload"
-rm -rf "${ANDROID_PAYLOAD_DIR}"
-mkdir -p "${ANDROID_PAYLOAD_DIR}"
+echo "[sync-payload] generating FortWeb runtime package ZIP"
 
-echo "[sync-payload] copying dist/runtime → payload/fortweb/"
-cp -R "${FORTWEB_DIR}/dist/runtime" "${ANDROID_PAYLOAD_DIR}/fortweb"
+FORTWEB_PACKAGE_ZIP="${TEMP_ROOT:-/tmp}/fortweb-runtime-${FORTWEB_COMMIT}.zip"
 
-# ── Create Android root redirect ──────────────────────────────────────────────
+(cd "${FORTWEB_DIR}" && node tools/package-runtime.mjs) >/dev/null 2>&1
 
-ENTRY_URL="./fortweb/app/index.html"
+# Find the generated ZIP (FortWeb puts it under .tmp/runtime-packages/)
+GENERATED_ZIP="$(ls -t "${FORTWEB_DIR}/.tmp/runtime-packages/"*.zip 2>/dev/null | head -1)"
 
-cat > "${ANDROID_PAYLOAD_DIR}/index.html" <<EOF
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>KERI Wallet</title>
-  <script>
-    window.location.replace('${ENTRY_URL}');
-  </script>
-</head>
-<body></body>
-</html>
-EOF
-
-# ── Write Android payload manifest ────────────────────────────────────────────
-
-STAGED_FILE_COUNT="$(find "${ANDROID_PAYLOAD_DIR}/fortweb" -type f | wc -l | tr -d ' ')"
-RUNTIME_DIGEST="$(cd "${ANDROID_PAYLOAD_DIR}/fortweb" && find . -type f -exec sha256sum {} \; | sort | sha256sum | awk '{print $1}')"
-
-cat > "${ANDROID_PAYLOAD_DIR}/android-payload-manifest.json" <<MANIFEST
-{
-  "schema": "fortoid.android-payload.v1",
-  "fortweb_commit": "${FORTWEB_COMMIT}",
-  "runtime_file_count": ${STAGED_FILE_COUNT},
-  "runtime_tree_sha256": "${RUNTIME_DIGEST}",
-  "entry_url": "${ENTRY_URL}"
-}
-MANIFEST
-
-# ── Validate staged output ────────────────────────────────────────────────────
-
-echo "[sync-payload] validating staged payload"
-
-if [[ ! -f "${ANDROID_PAYLOAD_DIR}/index.html" ]]; then
-  echo "error: root redirect missing after staging" 1>&2
+if [[ -z "${GENERATED_ZIP}" || ! -f "${GENERATED_ZIP}" ]]; then
+  echo "error: FortWeb package-runtime.mjs did not produce a ZIP" 1>&2
   exit 1
 fi
 
-if [[ ! -f "${ANDROID_PAYLOAD_DIR}/fortweb/app/index.html" ]]; then
-  echo "error: FortWeb entry HTML missing after staging" 1>&2
-  exit 1
-fi
+echo "[sync-payload] FortWeb package ZIP: ${GENERATED_ZIP}"
 
-if [[ ! -f "${ANDROID_PAYLOAD_DIR}/fortweb/app/app/main.js" ]]; then
-  echo "error: compiled main.js missing after staging" 1>&2
-  exit 1
-fi
+# ── Import into Android payload ───────────────────────────────────────────────
 
-# Generate runtime-origin contract (injected at runtime by MainActivity.kt;
-# this file is a build-time manifest for CI validation)
-cat > "${ANDROID_PAYLOAD_DIR}/fortweb/app/runtime-origin-contract.json" <<CONTRACT
-{
-  "schema": "fortweb.runtime-origin.v1",
-  "version": 1,
-  "platform": "android-webview",
-  "mode": "bundled-offline",
-  "documentOrigin": "https://appassets.androidplatform.net",
-  "appBaseUrl": "https://appassets.androidplatform.net",
-  "entryUrl": "https://appassets.androidplatform.net/index.html",
-  "workerUrl": "https://appassets.androidplatform.net/fortweb/app/runtime/wallet-worker.py",
-  "configUrl": "https://appassets.androidplatform.net/fortweb/pyscript-ci.toml",
-  "storage": {
-    "storageNamespace": "fort-webview",
-    "indexedDbRequired": true,
-    "originPartition": "https://appassets.androidplatform.net"
-  },
-  "capabilities": {
-    "customScheme": true,
-    "httpsLikeAssetOrigin": true,
-    "implicitBlobOriginSafe": true,
-    "networkAllowed": false,
-    "bundledAssetsOnly": true
-  }
-}
-CONTRACT
+echo "[sync-payload] importing runtime package into Android payload"
 
-if [[ ! -f "${ANDROID_PAYLOAD_DIR}/fortweb/app/runtime-origin-contract.json" ]]; then
-  echo "error: runtime-origin contract missing after staging" 1>&2
-  exit 1
-fi
+node "${SCRIPT_DIR}/tools/import-fortweb-runtime-package.mjs" "${GENERATED_ZIP}"
 
-echo "[sync-payload] staged ${STAGED_FILE_COUNT} runtime files"
-echo "[sync-payload] runtime tree sha256: ${RUNTIME_DIGEST}"
+echo "[sync-payload] payload import complete"
 echo "[sync-payload] done"
