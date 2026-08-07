@@ -551,49 +551,43 @@ describe('importPackage (integration)', () => {
     );
   });
 
-  it('rejects ZIP containing a symlink entry', async () => {
+  it('rejects ZIP containing a symlink entry', { skip: process.platform === 'darwin' ? 'macOS unzip does not preserve symlinks from ZIP metadata' : false }, async () => {
     const workDir = nextDir('zip-symlink');
     const destDir = path.join(workDir, 'payload');
     // Build a valid package ZIP first
     const { zipPath: cleanZip } = await makeCanonicalZip(nextDir('symlink-base'));
     const badZip = path.join(workDir, 'with-symlink.zip');
     await mkdir(workDir, { recursive: true });
-    // Use Python to clone the ZIP and add a proper symlink entry
+    // Use Python to clone the ZIP and add a proper Unix symlink entry
     execFileSync('python3', ['-c', `
-import zipfile, stat, io
+import zipfile, stat, io, struct
 src = '${cleanZip}'
 dst = '${badZip}'
 with zipfile.ZipFile(src, 'r') as zin:
     with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
             zout.writestr(item, zin.read(item.filename))
-        # Add a proper Unix symlink entry
+        # Add a proper Unix symlink entry with S_IFLNK mode
         info = zipfile.ZipInfo('fortweb-runtime/sneaky-link')
         info.external_attr = (stat.S_IFLNK | 0o777) << 16
         zout.writestr(info, '/etc/passwd')
 `], { timeout: 10000 });
-    // Verify the ZIP contains the symlink entry name
-    const list = execFileSync('unzip', ['-Z', '-1', badZip], { encoding: 'utf-8' });
-    assert.ok(list.includes('fortweb-runtime/sneaky-link'), 'fixture must contain symlink entry');
-    // On platforms where unzip preserves symlinks (Linux CI), importPackage
-    // will reject it. On macOS, unzip extracts symlinks as regular files,
-    // so the test is a no-op there — but the code path still exists.
-    // The inventory closure in importPackage checks isSymbolicLink().
-    try {
-      await importPackage(badZip, destDir);
-      // If we get here, unzip didn't preserve the symlink (macOS).
-      // This is fine — the check code exists and will trigger on Linux CI.
-    } catch (e) {
-      // Expected on Linux: symlink detected during inventory closure
-      assert.ok(
-        e.message.includes('symlink not allowed') || e.message.includes('inventory closure'),
-        `unexpected rejection: ${e.message}`,
-      );
-      // Clean up any partial extraction
-      await rm(workDir, { recursive: true, force: true }).catch(() => {});
-      return;
-    }
-    // Cleanup on macOS path
-    await rm(workDir, { recursive: true, force: true }).catch(() => {});
+    // Verify symlink entry exists with Unix symlink mode in archive metadata
+    const modeOut = execFileSync('python3', ['-c', `
+import zipfile, stat, os
+with zipfile.ZipFile('${badZip}', 'r') as zf:
+    for info in zf.infolist():
+        if info.filename == 'fortweb-runtime/sneaky-link':
+            mode = info.external_attr >> 16
+            is_lnk = stat.S_ISLNK(mode)
+            print(f'S_ISLNK={is_lnk} mode={mode:o}')
+`], { encoding: 'utf-8', timeout: 10000 });
+    assert.ok(modeOut.includes('S_ISLNK=True'), `symlink mode not set in ZIP: ${modeOut}`);
+
+    // On Linux, unzip preserves symlinks; importPackage must reject
+    await assert.rejects(
+      () => importPackage(badZip, destDir),
+      /symlink not allowed|inventory closure/,
+    );
   });
 });
