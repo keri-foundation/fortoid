@@ -10,7 +10,7 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFile, readdir, lstat } from 'node:fs/promises';
+import { readFile, readdir, lstat, rm } from 'node:fs/promises';
 import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -177,7 +177,7 @@ async function verifyApk(apkPath) {
 
     return { errors, payloadFiles };
   } finally {
-    await require('node:fs/promises').rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
