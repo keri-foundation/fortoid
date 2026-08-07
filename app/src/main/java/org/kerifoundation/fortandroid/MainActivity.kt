@@ -491,7 +491,7 @@ class MainActivity : AppCompatActivity() {
         Log.i(LOG_TAG, "Injected Android CSS overrides (dialog centering)")
     }
 
-    private class PayloadRootPathHandler(
+    internal class PayloadRootPathHandler(
         private val delegate: WebViewAssetLoader.AssetsPathHandler
     ) : WebViewAssetLoader.PathHandler {
         private val mimeOverrides = mapOf(
