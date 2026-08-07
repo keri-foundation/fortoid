@@ -492,7 +492,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     internal class PayloadRootPathHandler(
-        private val delegate: WebViewAssetLoader.AssetsPathHandler
+        private val delegate: WebViewAssetLoader.PathHandler
     ) : WebViewAssetLoader.PathHandler {
         private val mimeOverrides = mapOf(
             "js" to "text/javascript",

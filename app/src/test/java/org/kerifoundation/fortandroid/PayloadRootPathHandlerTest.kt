@@ -5,7 +5,6 @@ import androidx.webkit.WebViewAssetLoader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
 
@@ -34,9 +33,9 @@ class PayloadRootPathHandlerTest {
         }
     }
 
-    private fun handlerWith(assets: Map<String, String>): PayloadRootPathHandler {
+    private fun handlerWith(assets: Map<String, String>): MainActivity.PayloadRootPathHandler {
         val byteAssets = assets.mapValues { (_, v) -> v.toByteArray() }
-        return PayloadRootPathHandler(TestAssetsHandler(byteAssets))
+        return MainActivity.PayloadRootPathHandler(TestAssetsHandler(byteAssets))
     }
 
     // ── Valid asset resolution ────────────────────────────────────────────
@@ -89,7 +88,6 @@ class PayloadRootPathHandlerTest {
 
     @Test
     fun `missing main entrypoint returns null`() {
-        // No payload/index.html registered — the entrypoint is missing
         val handler = handlerWith(emptyMap())
         val response = handler.handle("/")
         assertNull("missing entrypoint must return null", response)
@@ -102,39 +100,43 @@ class PayloadRootPathHandlerTest {
         assertNull("empty path with missing index must return null", response)
     }
 
-    // ── No placeholder / fallback references ──────────────────────────────
+    // ── Old placeholder not reachable ─────────────────────────────────────
 
     @Test
-    fun `no reference to obsolete placeholder constant`() {
-        // Verify PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH is not reachable
-        // from the handler implementation.
-        val handler = handlerWith(emptyMap())
-        // Any path with missing entrypoint returns null — no fallback
+    fun `old placeholder asset is not substituted for missing entrypoint`() {
+        val handler = handlerWith(mapOf(
+            "bootstrap/payload-missing.html" to "<html><body>OLD PLACEHOLDER</body></html>"
+        ))
         val response = handler.handle("/")
-        assertNull(response)
-
-        // Verify the constant does not exist in the source
-        val source = javaClass.classLoader
-            ?.getResourceAsStream("org/kerifoundation/fortandroid/PayloadRootPathHandler.class")
-        // Structural assertion: the removed constant means no fallback branch
-        try {
-            @Suppress("UNUSED_EXPRESSION")
-            MainActivity::class.java.declaredFields
-                .find { it.name == "PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH" }
-            // If we reach here without NoSuchFieldException, the constant still exists
-            // But the constant was removed from the companion object scope
-        } catch (_: NoSuchFieldException) {
-            // expected — constant is gone
-        }
+        assertNull(
+            "must not substitute bootstrap/payload-missing.html for missing entrypoint",
+            response
+        )
     }
 
     @Test
-    fun `no path triggers bootstrap-payload-missing resolution`() {
-        val handler = handlerWith(emptyMap())
-        // Even if bootstrap/payload-missing.html existed in assets,
-        // the handler must not redirect to it
-        val response = handler.handle("/")
-        assertNull("must not serve bootstrap/payload-missing.html", response)
+    fun `old placeholder asset is not substituted for missing subordinate`() {
+        val handler = handlerWith(mapOf(
+            "payload/index.html" to "present",
+            "bootstrap/payload-missing.html" to "<html>PLACEHOLDER</html>"
+        ))
+        val response = handler.handle("missing.css")
+        assertNull(
+            "must not substitute placeholder for missing subordinate asset",
+            response
+        )
+    }
+
+    // ── Obsolete constant verification ───────────────────────────────────
+
+    @Test
+    fun `PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH constant is removed`() {
+        val field = MainActivity::class.java.declaredFields
+            .find { it.name == "PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH" }
+        assertNull(
+            "PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH must not exist in compiled class",
+            field
+        )
     }
 
     // ── Path normalization ────────────────────────────────────────────────
