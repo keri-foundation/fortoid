@@ -110,6 +110,9 @@ jobs:
       - name: Run importer tests
         run: node --test tools/import-fortweb-runtime-package.test.mjs
 
+      - name: Run packaged-runtime verifier tests
+        run: npm run test:verify-packaged-runtime
+
       - name: Import runtime package
         run: |
           ZIP=$(ls .deps/fortweb/.tmp/runtime-packages/*.zip | head -1)

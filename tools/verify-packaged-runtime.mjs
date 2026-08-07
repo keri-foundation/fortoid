@@ -10,22 +10,23 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFile, readdir, lstat, rm } from 'node:fs/promises';
+import { readFile, readdir, lstat, rm, mkdir } from 'node:fs/promises';
 import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MANIFEST_FILENAME = 'manifest.json';
 const CHECKSUM_FILENAME = 'checksums.sha256';
 const APK_PAYLOAD_PREFIX = 'assets/payload/';
 const STALE_ANDROID_MANIFEST = 'android-payload-manifest.json';
 const STALE_ORIGIN_CONTRACT = 'fortweb/app/runtime-origin-contract.json';
+const CS_DIGEST_RE = /^[0-9a-f]{64}$/;
 
-class VerifyError extends Error {
+export class VerifyError extends Error {
   constructor(msg) { super(msg); this.name = 'VerifyError'; }
 }
+
+// ── helpers ─────────────────────────────────────────────────────────────────
 
 function sha256File(fp) {
   return new Promise((resolve, reject) => {
@@ -41,76 +42,174 @@ function sha256Buf(buf) { return createHash('sha256').update(buf).digest('hex');
 
 function relativePath(p) { return p.replace(/\\/g, '/'); }
 
+function isSafeRelative(p) {
+  if (p === '' || path.isAbsolute(p) || p.includes('\\')) return false;
+  const n = path.normalize(p);
+  return n === p && !n.startsWith('..') && !n.split(path.sep).includes('..');
+}
+
+/** Case-insensitive duplicate detection. */
+export function findCaseCollisions(paths) {
+  const lower = new Map(), collisions = [];
+  for (const p of paths) {
+    const key = p.toLowerCase();
+    if (lower.has(key) && lower.get(key) !== p) collisions.push([lower.get(key), p]);
+    else lower.set(key, p);
+  }
+  return collisions;
+}
+
+// ── checksums.sha256 — strict canonical parser ─────────────────────────────
+
+/**
+ * Parse checksums.sha256.
+ * FortWeb canonical format: exactly one line:
+ *   <64 lowercase hex><two spaces>manifest.json
+ * Rejects empty, extra lines, malformed digest, wrong filename, missing separator.
+ */
+export function parseChecksums(rawBytes) {
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(rawBytes); }
+  catch (e) { return { errors: [`checksums.sha256: invalid UTF-8: ${e.message}`] }; }
+
+  if (text.includes('\uFFFD')) return { errors: ['checksums.sha256: contains U+FFFD replacement characters'] };
+
+  const lines = text.split('\n').filter(l => l.trim() !== '');
+  if (lines.length === 0) return { errors: ['checksums.sha256: empty'] };
+  if (lines.length > 1) return { errors: [`checksums.sha256: expected 1 entry, got ${lines.length} lines`] };
+
+  const line = lines[0];
+  // Must be: digest  manifest.json (two spaces)
+  const idx = line.indexOf('  ');
+  if (idx === -1) return { errors: ['checksums.sha256: malformed — expected "<digest>  manifest.json"'] };
+
+  const digest = line.slice(0, idx);
+  const name = line.slice(idx + 2);
+
+  const errors = [];
+  if (digest.length !== 64 || !CS_DIGEST_RE.test(digest))
+    errors.push(`checksums.sha256: digest must be 64 hex chars, got "${digest.slice(0, 64)}"`);
+  if (name !== MANIFEST_FILENAME)
+    errors.push(`checksums.sha256: expected "manifest.json", got "${name}"`);
+  return { digest, name, raw: text, errors };
+}
+
+// ── manifest — raw-byte integrity ──────────────────────────────────────────
+
+/**
+ * Read manifest.json as raw bytes, validate, hash, decode.
+ * Returns { manifest, rawBytes, errors }.
+ */
+export async function loadManifest(mfPath) {
+  const errors = [];
+  let rawBytes;
+  try { rawBytes = await readFile(mfPath); }
+  catch (e) { return { errors: [`manifest.json: cannot read: ${e.message}`] }; }
+
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(rawBytes); }
+  catch (e) { return { errors: [`manifest.json: invalid UTF-8: ${e.message}`] }; }
+
+  if (text.includes('\uFFFD')) return { errors: ['manifest.json: contains U+FFFD replacement characters'] };
+
+  let manifest;
+  try { manifest = JSON.parse(text); }
+  catch (e) { return { errors: [`manifest.json: invalid JSON: ${e.message}`] }; }
+
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest))
+    return { errors: ['manifest.json: must be a JSON object'] };
+
+  return { manifest, rawBytes, text, errors };
+}
+
+// ── staged-directory verification ──────────────────────────────────────────
+
 export async function verifyPayload(rootDir, opts = {}) {
   const prefix = opts.apkPrefix || '';
   const errors = [];
 
-  // 1. manifest.json
+  // 1. manifest.json — raw-byte integrity
   const mfRel = prefix + MANIFEST_FILENAME;
   const mfPath = path.join(rootDir, mfRel);
   if (!existsSync(mfPath)) return [`${MANIFEST_FILENAME} not found at ${mfRel}`];
 
-  let manifest, manifestRaw;
-  try {
-    manifestRaw = await readFile(mfPath, 'utf-8');
-    manifest = JSON.parse(manifestRaw);
-  } catch (e) { return [`${MANIFEST_FILENAME}: ${e.message}`]; }
+  const { manifest, rawBytes: mfBytes, errors: mfErrs } = await loadManifest(mfPath);
+  if (mfErrs.length) return mfErrs;
 
-  if (!manifest.package_name || manifest.package_name !== 'fortweb-runtime') {
+  if (!manifest.package_name || manifest.package_name !== 'fortweb-runtime')
     errors.push(`manifest: expected package_name "fortweb-runtime", got "${manifest.package_name || '(missing)'}"`);
-  }
-  if (!manifest.producer || manifest.producer !== 'fortweb') {
-    errors.push(`manifest: expected producer "fortweb"`);
-  }
+  if (!manifest.producer || manifest.producer !== 'fortweb')
+    errors.push('manifest: expected producer "fortweb"');
   if (!Array.isArray(manifest.files)) {
     errors.push('manifest.files: must be an array');
     return errors;
   }
+  if (manifest.files.length === 0)
+    errors.push('manifest.files: must not be empty');
 
-  // 2. checksums.sha256 self-check
+  // 2. checksums.sha256 — strict canonical, against raw manifest bytes
   const csRel = prefix + CHECKSUM_FILENAME;
   const csPath = path.join(rootDir, csRel);
   if (!existsSync(csPath)) { errors.push(`${CHECKSUM_FILENAME} not found`); }
   else {
-    try {
-      const csRaw = (await readFile(csPath, 'utf-8')).trim();
-      const parts = csRaw.split(/\s+/, 2);
-      if (parts.length !== 2) errors.push('checksums.sha256: malformed');
+    let csBytes;
+    try { csBytes = await readFile(csPath); }
+    catch (e) { errors.push(`checksums.sha256: cannot read: ${e.message}`); }
+
+    if (csBytes) {
+      const cs = parseChecksums(csBytes);
+      if (cs.errors.length) errors.push(...cs.errors);
       else {
-        const [digest, name] = parts;
-        if (name !== MANIFEST_FILENAME) errors.push(`checksums.sha256: expected "manifest.json", got "${name}"`);
-        const actual = sha256Buf(Buffer.from(manifestRaw));
-        if (digest !== actual) errors.push(`checksums.sha256: manifest digest mismatch`);
+        // Hash actual raw manifest bytes, not decoded/re-encoded text
+        const actualManifestDigest = sha256Buf(mfBytes);
+        if (cs.digest !== actualManifestDigest)
+          errors.push(`checksums.sha256: manifest digest mismatch (expected ${cs.digest}, actual ${actualManifestDigest})`);
       }
-    } catch (e) { errors.push(`checksums.sha256: ${e.message}`); }
+    }
   }
 
-  // 3. Build permitted path set
-  const permitted = new Set();
-  permitted.add(prefix + MANIFEST_FILENAME);
-  permitted.add(prefix + CHECKSUM_FILENAME);
+  // 3. Build permitted path set with case-collision detection
+  const allDeclared = [prefix + MANIFEST_FILENAME, prefix + CHECKSUM_FILENAME];
   const manifestEntries = new Map();
+  const seenPaths = new Set();
   for (const f of manifest.files) {
     const fp = prefix + f.path;
-    if (permitted.has(fp)) errors.push(`duplicate manifest path: ${f.path}`);
-    if (manifestEntries.has(fp)) errors.push(`duplicate manifest path: ${f.path}`);
-    permitted.add(fp);
+    allDeclared.push(fp);
+    if (seenPaths.has(fp)) { errors.push(`duplicate manifest path: ${f.path}`); continue; }
+    seenPaths.add(fp);
     manifestEntries.set(fp, f);
   }
 
-  // 4. Inventory the actual files
+  // Case-collision among declared paths
+  const declaredCollisions = findCaseCollisions(allDeclared);
+  for (const [a, b] of declaredCollisions)
+    errors.push(`case-colliding paths: "${a}" vs "${b}"`);
+
+  const permitted = new Set(allDeclared);
+
+  // 4. Inventory actual filesystem entries
   const actualPaths = new Map();
   if (!existsSync(rootDir)) return [`payload root not found: ${rootDir}`];
+
   const allEnts = await readdir(rootDir, { recursive: true, withFileTypes: true });
   for (const ent of allEnts) {
-    if (!ent.isFile()) continue;
     const abs = path.join(ent.parentPath || ent.path, ent.name);
     const rel = relativePath(path.relative(rootDir, abs));
+
+    // Symlink check BEFORE isFile() skip
+    if (ent.isSymbolicLink()) { errors.push(`symlink not allowed: ${rel}`); continue; }
+    if (!ent.isFile()) continue; // directories are structural
+
     if (actualPaths.has(rel)) errors.push(`duplicate file in payload: ${rel}`);
     actualPaths.set(rel, abs);
   }
 
-  // 5. Check every permitted path exists and matches
+  // Case-collision among actual files
+  const actualCollisions = findCaseCollisions([...actualPaths.keys()]);
+  for (const [a, b] of actualCollisions)
+    errors.push(`case-colliding files: "${a}" vs "${b}"`);
+
+  // 5. Check every manifest entry exists and matches
   for (const [rel, entry] of manifestEntries) {
     const abs = actualPaths.get(rel);
     if (!abs) { errors.push(`missing manifest file: ${rel}`); continue; }
@@ -122,11 +221,10 @@ export async function verifyPayload(rootDir, opts = {}) {
     } catch (e) { errors.push(`error reading ${rel}: ${e.message}`); }
   }
 
-  // Also verify manifest and checksums are present
+  // Verify metadata files present
   for (const meta of [prefix + MANIFEST_FILENAME, prefix + CHECKSUM_FILENAME]) {
-    if (!actualPaths.has(meta) && !errors.some(e => e.includes(meta))) {
+    if (!actualPaths.has(meta) && !errors.some(e => e.includes(meta)))
       errors.push(`missing: ${meta}`);
-    }
   }
 
   // 6. Reject unexpected files
@@ -142,46 +240,85 @@ export async function verifyPayload(rootDir, opts = {}) {
   return errors;
 }
 
-// ── APK mode ────────────────────────────────────────────────────────────────
+// ── APK mode — machine-readable listing, pre-extraction validation ─────────
 
-async function verifyApk(apkPath) {
+/** List APK members using unzip -Z -1 (machine-readable). */
+function unzipListMachine(apkPath) {
+  try {
+    const out = execFileSync('unzip', ['-Z', '-1', apkPath], {
+      encoding: 'utf-8', timeout: 15000, maxBuffer: 10 * 1024 * 1024,
+    });
+    return out.trim().split('\n').filter(Boolean);
+  } catch (e) {
+    throw new VerifyError(`unzip -Z -1 failed: ${e.stderr || e.message}`);
+  }
+}
+
+/** Extract specific members from APK. */
+function unzipExtractMembers(apkPath, members, destDir) {
+  try {
+    execFileSync('unzip', ['-q', '-o', apkPath, ...members, '-d', destDir], {
+      timeout: 30000, maxBuffer: 10 * 1024 * 1024,
+    });
+  } catch (e) {
+    throw new VerifyError(`unzip extract failed: ${e.stderr || e.message}`);
+  }
+}
+
+export async function verifyApk(apkPath) {
   if (!existsSync(apkPath)) throw new VerifyError(`APK not found: ${apkPath}`);
+
+  // Machine-readable member listing
+  const allMembers = unzipListMachine(apkPath);
+
+  // Filter to payload members (not directory entries)
+  const payloadMembers = allMembers.filter(m => m.startsWith(APK_PAYLOAD_PREFIX) && !m.endsWith('/'));
+  if (payloadMembers.length === 0)
+    throw new VerifyError(`no payload files found in APK under ${APK_PAYLOAD_PREFIX}`);
+
+  // Validate member paths before extraction
+  const memErrs = [];
+  for (const m of payloadMembers) {
+    const rel = m.slice(APK_PAYLOAD_PREFIX.length);
+    if (!isSafeRelative(rel)) memErrs.push(`unsafe payload member: ${m}`);
+  }
+  // Duplicate detection
+  const seenMems = new Set();
+  for (const m of payloadMembers) {
+    if (seenMems.has(m)) memErrs.push(`duplicate APK member: ${m}`);
+    seenMems.add(m);
+  }
+  // Case-collision detection
+  const memCollisions = findCaseCollisions(payloadMembers);
+  for (const [a, b] of memCollisions)
+    memErrs.push(`case-colliding APK members: "${a}" vs "${b}"`);
+
+  if (memErrs.length) throw new VerifyError(`APK member validation:\n  - ${memErrs.join('\n  - ')}`);
+
+  // Require manifest.json exists in payload
+  if (!payloadMembers.includes(APK_PAYLOAD_PREFIX + MANIFEST_FILENAME))
+    throw new VerifyError(`${APK_PAYLOAD_PREFIX}${MANIFEST_FILENAME} not found in APK`);
 
   const tmpDir = path.join(tmpdir(), `apk-verify-${Date.now()}`);
   try {
-    // List payload files
-    let listing;
-    try {
-      listing = execFileSync('unzip', ['-l', apkPath], { encoding: 'utf-8', timeout: 15000 });
-    } catch (e) { throw new VerifyError(`unzip -l failed: ${e.stderr || e.message}`); }
+    await mkdir(tmpDir, { recursive: true });
+    unzipExtractMembers(apkPath, payloadMembers, tmpDir);
 
-    const payloadFiles = listing.split('\n')
-      .filter(l => l.includes(APK_PAYLOAD_PREFIX))
-      .map(l => l.trim().split(/\s+/).pop())
-      .filter(Boolean);
+    const errors = await verifyPayload(tmpDir, { apkPrefix: APK_PAYLOAD_PREFIX });
 
-    if (payloadFiles.length === 0) throw new VerifyError(`no payload files found in APK under ${APK_PAYLOAD_PREFIX}`);
-
-    // Extract payload to temp
-    execFileSync('unzip', ['-q', '-o', apkPath, ...payloadFiles, '-d', tmpDir], { timeout: 30000 });
-
-    // Verify uses the tmpDir root with APK prefix
-    const rootDir = tmpDir;
-    const errors = await verifyPayload(rootDir, { apkPrefix: APK_PAYLOAD_PREFIX });
-
-    // Also check for stale nested fortweb structure
+    // Check for stale nested fortweb structure
     const staleNested = path.join(tmpDir, APK_PAYLOAD_PREFIX + 'fortweb');
     if (existsSync(staleNested)) {
       errors.push('stale nested payload/fortweb/ subtree present');
     }
 
-    return { errors, payloadFiles };
+    return { errors, payloadMembers };
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-// ── CLI ─────────────────────────────────────────────────────────────────────
+// ── CLI boundary (process.exit only here) ──────────────────────────────────
 
 async function main() {
   const args = process.argv.slice(2);
@@ -201,7 +338,7 @@ async function main() {
     for (const e of result.errors) console.error(`[verify-packaged-runtime] ${e}`);
     process.exit(1);
   }
-  const count = result.payloadFiles ? result.payloadFiles.length : 'staged';
+  const count = result.payloadMembers ? result.payloadMembers.length : 'staged';
   console.error(`[verify-packaged-runtime] PASS: ${count} files verified`);
   process.exit(0);
 }
