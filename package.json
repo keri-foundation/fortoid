@@ -1,0 +1,9 @@
+{
+  "name": "fortoid-scaffold",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate:runtime-platform-config": "node tools/validate-runtime-platform-config.mjs",
+    "test:runtime-platform-config": "node --test tools/validate-runtime-platform-config.test.mjs"
+  }
+}
