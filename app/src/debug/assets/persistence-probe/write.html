@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Persistence Write Probe</title>
+<script>
+// Reads host-supplied key/value from window.__probeParams (injected by
+// the instrumentation test via evaluateJavascript or a script tag).
+// Writes to IndexedDB and reports success/failure.
+
+window.__probeResult = { state: "loading", pid: null, origin: self.location.origin };
+
+function fail(category, message) {
+    window.__probeResult = { state: "error", category: category, message: message };
+}
+
+try {
+    var params = window.__probeParams || {};
+    var key = params.key;
+    var value = params.value;
+    if (!key || !value) {
+        fail("MISSING_PARAMS", "key and value must be supplied via window.__probeParams");
+    } else {
+        var request = indexedDB.open("fortoid-persistence-probe", 1);
+        request.onupgradeneeded = function(e) {
+            e.target.result.createObjectStore("probe");
+        };
+        request.onsuccess = function(e) {
+            var db = e.target.result;
+            try {
+                var tx = db.transaction("probe", "readwrite");
+                var store = tx.objectStore("probe");
+                store.put(value, key);
+                tx.oncomplete = function() {
+                    // Immediate readback
+                    var rtx = db.transaction("probe", "readonly");
+                    var rstore = rtx.objectStore("probe");
+                    var getReq = rstore.get(key);
+                    getReq.onsuccess = function() {
+                        if (getReq.result === value) {
+                            window.__probeResult = {
+                                state: "done",
+                                phase: "write",
+                                key: key,
+                                immediateReadback: "ok",
+                                origin: self.location.origin,
+                                isSecureContext: self.isSecureContext || false
+                            };
+                        } else {
+                            fail("IMMEDIATE_READBACK_FAILURE", "value mismatch on immediate readback");
+                        }
+                    };
+                    getReq.onerror = function() { fail("INDEXEDDB_READ_FAILURE", getReq.error?.message); };
+                };
+                tx.onerror = function() { fail("INDEXEDDB_WRITE_FAILURE", tx.error?.message); };
+            } catch (e) { fail("INDEXEDDB_WRITE_FAILURE", e.message); }
+        };
+        request.onerror = function(e) { fail("INDEXEDDB_OPEN_FAILURE", e.target.error?.message); };
+    }
+} catch (e) {
+    fail("PAGE_ERROR", e.message);
+}
+</script>

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Persistence Read Probe</title>
+<script>
+// Reads host-supplied key/expected-value from window.__probeParams and
+// retrieves the stored value from IndexedDB. Reports match/mismatch.
+
+window.__probeResult = { state: "loading", origin: self.location.origin };
+
+function fail(category, message) {
+    window.__probeResult = { state: "error", category: category, message: message };
+}
+
+try {
+    var params = window.__probeParams || {};
+    var key = params.key;
+    var expectedValue = params.value;
+    if (!key || expectedValue === undefined) {
+        fail("MISSING_PARAMS", "key and value must be supplied via window.__probeParams");
+    } else {
+        var request = indexedDB.open("fortoid-persistence-probe", 1);
+        request.onsuccess = function(e) {
+            var db = e.target.result;
+            try {
+                var tx = db.transaction("probe", "readonly");
+                var store = tx.objectStore("probe");
+                var getReq = store.get(key);
+                getReq.onsuccess = function() {
+                    var storedValue = getReq.result;
+                    if (storedValue === undefined) {
+                        fail("PERSISTED_KEY_MISSING", "key '" + key + "' not found after process restart");
+                    } else if (storedValue !== expectedValue) {
+                        fail("PERSISTED_VALUE_MISMATCH", "expected '" + expectedValue + "', got '" + storedValue + "'");
+                    } else {
+                        window.__probeResult = {
+                            state: "done",
+                            phase: "read",
+                            key: key,
+                            persistedValue: storedValue,
+                            origin: self.location.origin,
+                            isSecureContext: self.isSecureContext || false
+                        };
+                    }
+                };
+                getReq.onerror = function() { fail("INDEXEDDB_READ_FAILURE", getReq.error?.message); };
+            } catch (e) { fail("INDEXEDDB_READ_FAILURE", e.message); }
+        };
+        request.onerror = function(e) { fail("INDEXEDDB_OPEN_FAILURE", e.target.error?.message); };
+    }
+} catch (e) {
+    fail("PAGE_ERROR", e.message);
+}
+</script>

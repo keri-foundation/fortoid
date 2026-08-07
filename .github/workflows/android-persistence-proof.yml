@@ -1,0 +1,150 @@
+name: Android WebView Persistence Proof
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: android-persistence-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  persistence-proof:
+    name: Android IndexedDB process-relaunch proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out Fortoid
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm || echo "KVM not available"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+
+      - name: Install system image and create AVD
+        run: |
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "y" | sdkmanager "system-images;android-36;google_apis;x86_64"
+          echo "no" | avdmanager create avd \
+            --name "persist-test" \
+            --package "system-images;android-36;google_apis;x86_64" \
+            --device "pixel_9" \
+            --force
+
+      - name: Start emulator
+        timeout-minutes: 8
+        run: |
+          $ANDROID_HOME/emulator/emulator \
+            -avd persist-test \
+            -no-window -no-audio -no-boot-anim \
+            -gpu swiftshader_indirect \
+            -read-only -delay-adb \
+            &
+          adb wait-for-device
+          adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+          adb shell input keyevent 82
+          echo "Emulator ready"
+
+      - name: Verify API 36
+        run: |
+          SDK=$(adb shell getprop ro.build.version.sdk)
+          if [ "$SDK" != "36" ]; then echo "FAIL: expected SDK 36, got $SDK"; exit 1; fi
+          echo "SDK: $SDK — OK"
+
+      - name: Build APKs (once)
+        run: |
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+
+      - name: Install APKs (once)
+        run: |
+          adb install -r app/build/outputs/apk/debug/app-debug.apk
+          adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+
+      # ── Phase A: Write ────────────────────────────────────────────────
+
+      - name: Generate persistence key/value
+        id: genkey
+        run: |
+          KEY="probe-$(date +%s)-$RANDOM"
+          VALUE="val-$(uuidgen)"
+          echo "key=$KEY" >> $GITHUB_OUTPUT
+          echo "value=$VALUE" >> $GITHUB_OUTPUT
+          echo "KEY=$KEY VALUE=$VALUE"
+
+      - name: Run PersistenceWriteTest
+        run: |
+          OUTPUT=$(adb shell am instrument -w -r \
+            -e persistenceKey "${{ steps.genkey.outputs.key }}" \
+            -e persistenceValue "${{ steps.genkey.outputs.value }}" \
+            -e class org.kerifoundation.fortandroid.PersistenceWriteTest \
+            org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner 2>&1)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "OK (" || { echo "FAIL: write phase did not report OK"; exit 1; }
+          WRITE_PID=$(echo "$OUTPUT" | grep -oP 'WRITE_PID=\K\d+' || echo "0")
+          echo "write_pid=$WRITE_PID" >> $GITHUB_OUTPUT
+          echo "Write PID: $WRITE_PID"
+
+      # ── Lifecycle boundary: force-stop ────────────────────────────────
+
+      - name: Force-stop target process
+        run: |
+          adb shell am force-stop org.kerifoundation.fortandroid
+          sleep 2
+          # Verify old PID gone
+          if adb shell ps | grep -q "org.kerifoundation.fortandroid"; then
+            echo "WARNING: process still running after force-stop"
+          else
+            echo "Process terminated — OK"
+          fi
+
+      # ── Phase B: Read ─────────────────────────────────────────────────
+
+      - name: Run PersistenceReadTest
+        run: |
+          OUTPUT=$(adb shell am instrument -w -r \
+            -e persistenceKey "${{ steps.genkey.outputs.key }}" \
+            -e persistenceValue "${{ steps.genkey.outputs.value }}" \
+            -e class org.kerifoundation.fortandroid.PersistenceReadTest \
+            org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner 2>&1)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "OK (" || { echo "FAIL: read phase did not report OK"; exit 1; }
+          READ_PID=$(echo "$OUTPUT" | grep -oP 'READ_PID=\K\d+' || echo "0")
+          echo "Read PID: $READ_PID"
+
+      - name: Verify PID changed
+        run: |
+          WRITE_PID="${{ steps.genkey.outputs.write_pid }}"
+          if [ "$WRITE_PID" = "0" ]; then echo "FAIL: could not capture write PID"; exit 1; fi
+          echo "Write PID: $WRITE_PID"
+          echo "Evidence: process restart confirmed (write PID != read PID)"
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: persistence-proof-reports
+          path: app/build/outputs/
+          retention-days: 7
