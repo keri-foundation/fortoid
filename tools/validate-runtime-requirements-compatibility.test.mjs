@@ -172,10 +172,31 @@ describe('validateCompatibility — structural', () => {
 
   it('13. missing config fails', async () => {
     const { dir } = await stageFixture('no-config');
-    await rm(path.join(dir, 'runtime-platform-config.json'), { force: true });
-    // The validator uses the repo config path, not fixture config.
-    // This test is satisfied by checking that the real config path exists.
-    assert.ok(existsSync(REAL_CONFIG), 'real platform config must exist');
+    const nonexistentCfg = path.join(dir, 'does-not-exist.json');
+    const r = await validateCompatibility(dir, nonexistentCfg);
+    const errs = r.errors || r;
+    assert.ok(errs.some(e => e.message.includes('platform config not found')), `expected missing-config error, got: ${JSON.stringify(errs)}`);
+  });
+
+  it('13a. missing version fails', async () => {
+    const { dir } = await stageFixture('no-version', { version: undefined });
+    const r = await validateCompatibility(dir);
+    const errs = r.errors || r;
+    assert.ok(errs.some(e => e.message.includes('version')), `expected version error, got: ${JSON.stringify(errs)}`);
+  });
+
+  it('13b. wrong version fails', async () => {
+    const { dir } = await stageFixture('wrong-version', { version: 2 });
+    const r = await validateCompatibility(dir);
+    const errs = r.errors || r;
+    assert.ok(errs.some(e => e.message.includes('version')), `expected version error, got: ${JSON.stringify(errs)}`);
+  });
+
+  it('13c. non-integer version fails', async () => {
+    const { dir } = await stageFixture('string-version', { version: '1' });
+    const r = await validateCompatibility(dir);
+    const errs = r.errors || r;
+    assert.ok(errs.some(e => e.message.includes('version')), `expected version error, got: ${JSON.stringify(errs)}`);
   });
 
   it('14. invalid config schema fails', async () => {
@@ -201,15 +222,27 @@ describe('validateCompatibility — structural', () => {
 
 describe('validateCompatibility — capabilities', () => {
   it('16. missing required producer capability fails', async () => {
-    const { dir } = await stageFixture('missing-cap', { capabilities: { stable_origin_across_launches: { required: true, description: 'x' } } });
-    // We removed 9 capabilities — the mapper should still evaluate what's declared.
-    // Unknown capabilities fail, but we're testing that declared ones are evaluated.
+    // Remove persistent_storage_partition from declared capabilities.
+    // Canonical enforcement must reject the incomplete vocabulary.
+    const reduced = { ...REAL_RR.capabilities };
+    delete reduced.persistent_storage_partition;
+    const { dir } = await stageFixture('missing-cap', { capabilities: reduced });
     const r = await validateCompatibility(dir);
-    // stable_origin should be SATISFIED since it's the only one declared
     const caps = r.capabilities || [];
-    const so = caps.find(c => c.capability === 'stable_origin_across_launches');
-    assert.ok(so, 'stable_origin_across_launches must be evaluated');
-    assert.ok(so.compatible, 'stable_origin_across_launches should be SATISFIED');
+    const psp = caps.find(c => c.capability === 'persistent_storage_partition');
+    assert.ok(psp, 'persistent_storage_partition must be reported as missing');
+    assert.ok(!psp.compatible, 'missing canonical capability must fail');
+    assert.ok(psp.reason.includes('missing required'), `expected missing-required, got: ${psp.reason}`);
+  });
+
+  it('16a. malformed capability (required: false) fails', async () => {
+    const caps = { ...REAL_RR.capabilities, stable_origin_across_launches: { required: false, description: 'x' } };
+    const { dir } = await stageFixture('malformed-cap', { capabilities: caps });
+    const r = await validateCompatibility(dir);
+    const c = r.capabilities?.find(x => x.capability === 'stable_origin_across_launches');
+    assert.ok(c, 'must evaluate capability');
+    assert.ok(!c.compatible, 'required: false must fail');
+    assert.ok(c.reason.includes('malformed'), `expected malformed, got: ${c.reason}`);
   });
 
   it('17. unknown capability identifier fails', async () => {
@@ -265,14 +298,30 @@ describe('validateCompatibility — forbidden behaviors', () => {
     assert.ok(!unk.compatible, 'must fail');
   });
 
-  it('22. all five producer forbidden behaviors are SATISFIED', async () => {
+  it('22. service_worker_registration is UNPROVEN', async () => {
     const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
-    const fbs = r.forbidden_behaviors || [];
-    for (const fb of REAL_RR.forbidden_behaviors) {
-      const f = fbs.find(x => x.forbidden_behavior === fb);
-      assert.ok(f, `forbidden behavior ${fb} must be evaluated`);
-      assert.ok(f.compatible, `${fb} must be SATISFIED, got: ${f.reason || ''}`);
-    }
+    const sw = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'service_worker_registration');
+    assert.ok(sw, 'service_worker_registration must be evaluated');
+    assert.ok(!sw.compatible, 'service_worker_registration must be NOT-SATISFIED');
+    assert.ok(sw.evidence === 'UNPROVEN', `expected UNPROVEN, got ${sw.evidence}`);
+  });
+
+  it('22a. missing forbidden behavior from vocabulary fails', async () => {
+    const reduced = REAL_RR.forbidden_behaviors.filter(f => f !== 'network_fetch');
+    const { dir } = await stageFixture('missing-fb', { forbidden_behaviors: reduced });
+    const r = await validateCompatibility(dir);
+    const nf = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'network_fetch');
+    assert.ok(nf, 'network_fetch must be reported as missing');
+    assert.ok(!nf.compatible, 'missing canonical FB must fail');
+    assert.ok(nf.reason.includes('missing required'), `expected missing-required, got: ${nf.reason}`);
+  });
+
+  it('22b. duplicate forbidden behaviors fail', async () => {
+    const dups = [...REAL_RR.forbidden_behaviors, 'network_fetch'];
+    const { dir } = await stageFixture('dup-fb', { forbidden_behaviors: dups });
+    const r = await validateCompatibility(dir);
+    const errs = r.errors || r;
+    assert.ok(errs.some(e => e.message.includes('duplicates')), `expected duplicates error, got: ${JSON.stringify(errs)}`);
   });
 });
 

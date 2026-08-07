@@ -25,9 +25,34 @@ const CONFIG_PATH = path.join(REPO_ROOT, 'runtime-platform-config.json');
 const MANIFEST_FILENAME = 'manifest.json';
 const EXPECTED_RR_PATH = 'contracts/runtime-requirements.json';
 const EXPECTED_SCHEMA = 'fort.runtime-requirements.v1';
+const EXPECTED_VERSION = 1;
 const EXPECTED_PRODUCER = 'fortweb';
 const EXPECTED_PROFILE = 'offline-runtime';
 const CONFIG_SCHEMA = 'fort.runtime-platform-config.v1';
+
+// Canonical capability set — derived from the published v1 contract.
+// Every capability must be present and registered.
+const CANONICAL_CAPABILITIES = new Set([
+  'stable_origin_across_launches',
+  'persistent_storage_partition',
+  'secure_context',
+  'remote_network_prohibition',
+  'bundled_assets_only',
+  'worker_availability',
+  'main_frame_provenance',
+  'origin_provenance',
+  'deterministic_entrypoint',
+  'no_fallback_shell_substitution',
+]);
+
+// Canonical forbidden-behavior set — derived from the published v1 contract.
+const CANONICAL_FORBIDDEN_BEHAVIORS = new Set([
+  'network_fetch',
+  'service_worker_registration',
+  'general_purpose_browsing',
+  'localhost_or_loopback_origin',
+  'http_fallback',
+]);
 
 class CompatibilityError extends Error {
   constructor(msg) { super(msg); this.name = 'CompatibilityError'; }
@@ -155,9 +180,11 @@ const FORBIDDEN_PREDICATES = {
   },
 
   service_worker_registration(rr, cfg) {
-    // Android WebView does not support Service Worker registration by default.
-    // No explicit blocking needed; the platform itself prohibits it.
-    return { compatible: true, evidence: 'PLATFORM-DEFAULT' };
+    // UNPROVEN: while Android WebView does not currently support Service Worker
+    // registration, this is not documented as an explicit blocking mechanism in
+    // this codebase. No test proves registration is impossible under this
+    // specific WebView configuration.
+    return { compatible: false, reason: 'Service Worker prohibition is not proven by any test', evidence: 'UNPROVEN' };
   },
 
   general_purpose_browsing(rr, cfg) {
@@ -218,6 +245,9 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
   if (!rr.schema || rr.schema !== EXPECTED_SCHEMA) {
     errors.push({ type: 'error', message: `unsupported requirements schema: "${rr.schema || '(missing)'}"` });
   }
+  if (rr.version !== EXPECTED_VERSION) {
+    errors.push({ type: 'error', message: `unsupported requirements version: ${rr.version} (expected ${EXPECTED_VERSION})` });
+  }
   if (!rr.producer || rr.producer !== EXPECTED_PRODUCER) {
     errors.push({ type: 'error', message: `unexpected producer: "${rr.producer || '(missing)'}"` });
   }
@@ -268,17 +298,29 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
   const registeredCaps = new Set(Object.keys(CAPABILITY_PREDICATES));
   const declaredCaps = new Set(Object.keys(capabilities));
 
-  // Missing registrations
-  for (const key of declaredCaps) {
-    if (!registeredCaps.has(key)) {
-      capResults.push({ capability: key, compatible: false, reason: `unknown capability — no predicate registered`, evidence: 'FAIL-CLOSED' });
+  // Missing canonical capabilities (fail closed)
+  for (const key of CANONICAL_CAPABILITIES) {
+    if (!declaredCaps.has(key)) {
+      capResults.push({ capability: key, compatible: false, reason: `missing required capability from producer vocabulary`, evidence: 'FAIL-CLOSED' });
     }
   }
-  // Duplicate registrations (impossible with object keys, but check)
-  // Evaluate registered capabilities
-  for (const key of registeredCaps) {
-    if (!declaredCaps.has(key)) continue; // only evaluate declared capabilities
+
+  // Unknown capabilities (not in canonical set)
+  for (const key of declaredCaps) {
+    if (!CANONICAL_CAPABILITIES.has(key)) {
+      capResults.push({ capability: key, compatible: false, reason: `unknown capability — not in canonical v1 vocabulary`, evidence: 'FAIL-CLOSED' });
+      continue;
+    }
+    if (!registeredCaps.has(key)) {
+      capResults.push({ capability: key, compatible: false, reason: `unknown capability — no predicate registered`, evidence: 'FAIL-CLOSED' });
+      continue;
+    }
+    // Malformed capability entry
     const cap = capabilities[key];
+    if (!cap || typeof cap !== 'object' || cap.required !== true) {
+      capResults.push({ capability: key, compatible: false, reason: `malformed capability — required must be true`, evidence: 'FAIL-CLOSED' });
+      continue;
+    }
     let result;
     try {
       result = CAPABILITY_PREDICATES[key](rr, config);
@@ -294,10 +336,33 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
     return [{ type: 'error', message: 'runtime-requirements.json: forbidden_behaviors missing or not an array' }];
   }
 
+  // Duplicate detection
+  const fbSeen = new Set();
+  const fbDups = [];
+  for (const fb of forbidden) {
+    if (fbSeen.has(fb)) fbDups.push(fb);
+    fbSeen.add(fb);
+  }
+  if (fbDups.length) {
+    return [{ type: 'error', message: `forbidden_behaviors contains duplicates: ${fbDups.join(', ')}` }];
+  }
+
   const fbResults = [];
   const registeredFB = new Set(Object.keys(FORBIDDEN_PREDICATES));
+  const declaredFB = new Set(forbidden);
+
+  // Missing canonical forbidden behaviors
+  for (const fb of CANONICAL_FORBIDDEN_BEHAVIORS) {
+    if (!declaredFB.has(fb)) {
+      fbResults.push({ forbidden_behavior: fb, compatible: false, reason: `missing required forbidden behavior from producer vocabulary`, evidence: 'FAIL-CLOSED' });
+    }
+  }
 
   for (const fb of forbidden) {
+    if (!CANONICAL_FORBIDDEN_BEHAVIORS.has(fb)) {
+      fbResults.push({ forbidden_behavior: fb, compatible: false, reason: `unknown forbidden behavior — not in canonical v1 vocabulary`, evidence: 'FAIL-CLOSED' });
+      continue;
+    }
     if (!registeredFB.has(fb)) {
       fbResults.push({ forbidden_behavior: fb, compatible: false, reason: `unknown forbidden behavior — no predicate registered`, evidence: 'FAIL-CLOSED' });
       continue;
