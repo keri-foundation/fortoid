@@ -5,157 +5,153 @@ import androidx.webkit.WebViewAssetLoader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.ByteArrayInputStream
 
 /**
  * Tests for PayloadRootPathHandler fallback-removal behavior.
  *
+ * Uses a recording delegate that never constructs WebResourceResponse,
+ * avoiding Android mockable-jar stub failures in plain JVM tests.
+ *
  * Proves:
- * - Valid assets return non-null responses with correct bytes.
- * - Missing subordinate assets return null (no placeholder substitution).
- * - Missing main entrypoint returns null (no alternate shell).
- * - No branch references the obsolete PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH.
+ * - Canonical paths are selected correctly (normalization).
+ * - Delegate null propagates as handler null (missing → no fallback).
+ * - Old placeholder path is never requested.
+ * - Each request results in exactly one delegate call.
+ * - PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH is absent from compiled class.
  */
 class PayloadRootPathHandlerTest {
 
-    /** A test double that returns a fixed response for known paths, null otherwise. */
-    private class TestAssetsHandler(
-        private val assets: Map<String, ByteArray>
-    ) : WebViewAssetLoader.PathHandler {
+    /** Recording test double: tracks requested paths, returns null. */
+    private class RecordingPathHandler : WebViewAssetLoader.PathHandler {
+        val requestedPaths = mutableListOf<String>()
+
         override fun handle(path: String): WebResourceResponse? {
-            val bytes = assets[path] ?: return null
-            return WebResourceResponse(
-                "application/octet-stream",
-                null,
-                ByteArrayInputStream(bytes)
-            )
+            requestedPaths += path
+            return null
         }
     }
 
-    private fun handlerWith(assets: Map<String, String>): MainActivity.PayloadRootPathHandler {
-        val byteAssets = assets.mapValues { (_, v) -> v.toByteArray() }
-        return MainActivity.PayloadRootPathHandler(TestAssetsHandler(byteAssets))
-    }
-
-    // ── Valid asset resolution ────────────────────────────────────────────
+    // ── Path selection (normalization) ──────────────────────────────────
 
     @Test
-    fun `valid payload asset returns non-null response`() {
-        val handler = handlerWith(mapOf("payload/index.html" to "<html></html>"))
-        val response = handler.handle("/")
-        assertNotNull("entrypoint must be found", response)
-    }
-
-    @Test
-    fun `valid payload asset returns correct bytes`() {
-        val content = "<html><body>hello</body></html>"
-        val handler = handlerWith(mapOf("payload/index.html" to content))
-        val response = handler.handle("/")
-        assertNotNull(response)
-        val bytes = response!!.data.readBytes()
-        assertEquals("returned bytes must match asset", content, String(bytes))
+    fun `slash requests payload-slash-index-dot-html`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        val result = handler.handle("/")
+        assertNull("delegate returns null → handler returns null", result)
+        assertEquals("must request exactly one delegate path", 1, delegate.requestedPaths.size)
+        assertEquals("payload/index.html", delegate.requestedPaths[0])
     }
 
     @Test
-    fun `subpath asset is resolved correctly`() {
-        val content = "console.log('main')"
-        val handler = handlerWith(mapOf("payload/app/main.js" to content))
-        val response = handler.handle("app/main.js")
-        assertNotNull(response)
-        val bytes = response!!.data.readBytes()
-        assertEquals(content, String(bytes))
+    fun `empty path requests index asset path`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        handler.handle("")
+        assertEquals(1, delegate.requestedPaths.size)
+        assertEquals("payload/index.html", delegate.requestedPaths[0])
     }
 
     @Test
-    fun `path with payload-prefix passes through unchanged`() {
-        val content = "{}"
-        val handler = handlerWith(mapOf("payload/contracts/runtime-requirements.json" to content))
-        val response = handler.handle("payload/contracts/runtime-requirements.json")
-        assertNotNull(response)
-        val bytes = response!!.data.readBytes()
-        assertEquals(content, String(bytes))
-    }
-
-    // ── Missing assets → null (no fallback) ───────────────────────────────
-
-    @Test
-    fun `missing subordinate asset returns null`() {
-        val handler = handlerWith(mapOf("payload/index.html" to "present"))
-        val response = handler.handle("missing-file.js")
-        assertNull("missing subordinate asset must return null", response)
+    fun `unprefixed subpath is prefixed with payload-slash`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        handler.handle("app/main.js")
+        assertEquals(1, delegate.requestedPaths.size)
+        assertEquals("payload/app/main.js", delegate.requestedPaths[0])
     }
 
     @Test
-    fun `missing main entrypoint returns null`() {
-        val handler = handlerWith(emptyMap())
-        val response = handler.handle("/")
-        assertNull("missing entrypoint must return null", response)
+    fun `leading slash is stripped before prefixing`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        handler.handle("/app/main.js")
+        assertEquals(1, delegate.requestedPaths.size)
+        assertEquals("payload/app/main.js", delegate.requestedPaths[0])
     }
 
     @Test
-    fun `empty path with missing entrypoint returns null`() {
-        val handler = handlerWith(mapOf("payload/other.txt" to "data"))
-        val response = handler.handle("")
-        assertNull("empty path with missing index must return null", response)
+    fun `payload-prefixed path passes through unchanged`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        handler.handle("payload/contracts/runtime-requirements.json")
+        assertEquals(1, delegate.requestedPaths.size)
+        assertEquals("payload/contracts/runtime-requirements.json", delegate.requestedPaths[0])
     }
 
-    // ── Old placeholder not reachable ─────────────────────────────────────
+    // ── Null propagation (missing → no fallback) ────────────────────────
 
     @Test
-    fun `old placeholder asset is not substituted for missing entrypoint`() {
-        val handler = handlerWith(mapOf(
-            "bootstrap/payload-missing.html" to "<html><body>OLD PLACEHOLDER</body></html>"
-        ))
-        val response = handler.handle("/")
-        assertNull(
-            "must not substitute bootstrap/payload-missing.html for missing entrypoint",
-            response
+    fun `delegate null returns handler null for missing entrypoint`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        val result = handler.handle("/")
+        assertNull("missing entrypoint must return null", result)
+        assertEquals("exactly one delegate call", 1, delegate.requestedPaths.size)
+    }
+
+    @Test
+    fun `delegate null returns handler null for missing subordinate`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        val result = handler.handle("missing-file.js")
+        assertNull("missing subordinate must return null", result)
+        assertEquals(1, delegate.requestedPaths.size)
+        assertEquals("payload/missing-file.js", delegate.requestedPaths[0])
+    }
+
+    // ── Old placeholder path never selected ─────────────────────────────
+
+    @Test
+    fun `old placeholder path is never requested for missing entrypoint`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        handler.handle("/")
+        assertTrue(
+            "must not request bootstrap/payload-missing.html",
+            delegate.requestedPaths.none { it == "bootstrap/payload-missing.html" }
         )
     }
 
     @Test
-    fun `old placeholder asset is not substituted for missing subordinate`() {
-        val handler = handlerWith(mapOf(
-            "payload/index.html" to "present",
-            "bootstrap/payload-missing.html" to "<html>PLACEHOLDER</html>"
-        ))
-        val response = handler.handle("missing.css")
-        assertNull(
-            "must not substitute placeholder for missing subordinate asset",
-            response
+    fun `old placeholder path is never requested for missing subordinate`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        handler.handle("missing.css")
+        assertTrue(
+            "must not request bootstrap/payload-missing.html",
+            delegate.requestedPaths.none { it == "bootstrap/payload-missing.html" }
         )
     }
 
-    // ── Obsolete constant verification ───────────────────────────────────
+    @Test
+    fun `exactly one delegate call per request`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        handler.handle("/")
+        handler.handle("other.js")
+        assertEquals("two requests → exactly two delegate calls", 2, delegate.requestedPaths.size)
+    }
+
+    // ── Obsolete constant verification ──────────────────────────────────
 
     @Test
-    fun `PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH constant is removed`() {
+    fun `PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH is absent from compiled class`() {
         val field = MainActivity::class.java.declaredFields
             .find { it.name == "PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH" }
         assertNull(
-            "PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH must not exist in compiled class",
+            "PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH must not exist in MainActivity",
             field
         )
-    }
-
-    // ── Path normalization ────────────────────────────────────────────────
-
-    @Test
-    fun `leading slash is stripped for path normalization`() {
-        val content = "data"
-        val handler = handlerWith(mapOf("payload/app/data.txt" to content))
-        val response = handler.handle("/app/data.txt")
-        assertNotNull(response)
-        assertEquals(content, String(response!!.data.readBytes()))
-    }
-
-    @Test
-    fun `empty path resolves to index asset path`() {
-        val content = "index"
-        val handler = handlerWith(mapOf("payload/index.html" to content))
-        val response = handler.handle("")
-        assertNotNull(response)
-        assertEquals(content, String(response!!.data.readBytes()))
+        // Also check companion object
+        val companionField = MainActivity::class.java.classes
+            .flatMap { it.declaredFields.toList() }
+            .find { it.name == "PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH" }
+        assertNull(
+            "PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH must not exist in companion",
+            companionField
+        )
     }
 }

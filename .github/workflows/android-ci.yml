@@ -77,34 +77,47 @@ jobs:
               print(f"FAIL: no JUnit XML found in {results_dir}")
               sys.exit(1)
 
-          target = "org.kerifoundation.fortandroid.PayloadRootPathHandlerTest"
+          exact_suite = "org.kerifoundation.fortandroid.PayloadRootPathHandlerTest"
+          expected_tests = 11
           found = False
+
           for fp in xml_files:
               tree = ET.parse(fp)
               root = tree.getroot()
               name = root.get("name", "")
-              if "PayloadRootPathHandlerTest" in name:
-                  found = True
-                  tests = int(root.get("tests", 0))
-                  failures = int(root.get("failures", 0))
-                  errors = int(root.get("errors", 0))
-                  skipped = int(root.get("skipped", 0))
-                  print(f"Suite: {name}")
-                  print(f"Tests: {tests}, Failures: {failures}, Errors: {errors}, Skipped: {skipped}")
-                  if tests < 11:
-                      print(f"FAIL: expected >=11 tests in PayloadRootPathHandlerTest, got {tests}")
-                      sys.exit(1)
-                  if failures > 0 or errors > 0:
-                      print(f"FAIL: PayloadRootPathHandlerTest has failures={failures} errors={errors}")
-                      sys.exit(1)
-                  break
+              if name != exact_suite:
+                  continue
+
+              found = True
+              tests = int(root.get("tests", 0))
+              failures = int(root.get("failures", 0))
+              errors = int(root.get("errors", 0))
+              skipped = int(root.get("skipped", 0))
+
+              print(f"Suite: {name}")
+              print(f"Tests: {tests}, Failures: {failures}, Errors: {errors}, Skipped: {skipped}")
+
+              if tests != expected_tests:
+                  print(f"FAIL: expected exactly {expected_tests} tests, got {tests}")
+                  sys.exit(1)
+              if failures != 0:
+                  print(f"FAIL: {failures} test(s) failed")
+                  sys.exit(1)
+              if errors != 0:
+                  print(f"FAIL: {errors} test(s) errored")
+                  sys.exit(1)
+              if skipped != 0:
+                  print(f"FAIL: {skipped} test(s) skipped")
+                  sys.exit(1)
+
+              break
 
           if not found:
-              print(f"FAIL: PayloadRootPathHandlerTest suite not found in JUnit XML")
-              print(f"Searched: {xml_files}")
+              print(f"FAIL: suite '{exact_suite}' not found in JUnit XML")
+              print(f"Searched: {[os.path.basename(f) for f in xml_files]}")
               sys.exit(1)
 
-          print("PASS: PayloadRootPathHandlerTest executed with zero failures/errors")
+          print("PASS: PayloadRootPathHandlerTest executed with zero failures/errors/skips")
           PY
 
       - name: Run debug lint
