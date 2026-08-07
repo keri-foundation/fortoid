@@ -265,6 +265,9 @@ export async function activatePayload(extractedDir, destDir, packageName, opts =
 
     await rename(candidateDir, destDir);
 
+    // Allow tests to inject failure after activation (triggers rollback)
+    if (opts.afterActivate) await opts.afterActivate();
+
     // Remove backup
     if (existsSync(backupDir)) await rm(backupDir, { recursive: true, force: true });
 
@@ -275,6 +278,8 @@ export async function activatePayload(extractedDir, destDir, packageName, opts =
     // Rollback
     let rollbackFailed = false;
     try {
+      // Allow tests to inject failure during rollback
+      if (opts.beforeRollback) await opts.beforeRollback();
       if (existsSync(backupDir)) {
         if (existsSync(destDir)) await rm(destDir, { recursive: true, force: true });
         await rename(backupDir, destDir);

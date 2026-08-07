@@ -271,6 +271,13 @@ export async function verifyApk(apkPath) {
   // Machine-readable member listing
   const allMembers = unzipListMachine(apkPath);
 
+  // Reject unsafe members immediately — before prefix filtering
+  const memberErrs = [];
+  for (const m of allMembers) {
+    if (!isSafeRelative(m)) memberErrs.push(`unsafe payload member: ${m}`);
+  }
+  if (memberErrs.length) throw new VerifyError(`APK member validation:\n  - ${memberErrs.join('\n  - ')}`);
+
   // Filter to payload members (not directory entries)
   const payloadMembers = allMembers.filter(m => m.startsWith(APK_PAYLOAD_PREFIX) && !m.endsWith('/'));
   if (payloadMembers.length === 0)

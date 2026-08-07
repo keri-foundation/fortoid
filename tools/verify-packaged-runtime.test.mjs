@@ -519,18 +519,56 @@ with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as zf:
   });
 
   it('25. traversal member fails', async () => {
-    // Can't easily create a traversal ZIP entry with `zip` command.
-    // Use a small ZIP with a hardcoded traversal path — skip if zip refuses.
-    // Instead, test isSafeRelative via verifyPayload's path handling
-    // (traversal manifests are rejected by manifest validation)
-    // This test is satisfied by the importer's validateEntries test.
-    // For APK mode, a traversal member would fail isSafeRelative check before extraction.
-    assert.ok(true, 'traversal paths caught by isSafeRelative in member validation');
+    // Build APK with a traversal path using Python zipfile
+    const zipDir = path.join(FIXTURE_DIR, `apk-${seq()}-trav`);
+    await mkdir(path.join(zipDir, 'assets/payload'), { recursive: true });
+    // Add a valid manifest so the listing finds payload files
+    const mfContent = JSON.stringify({ package_name: 'fortweb-runtime', producer: 'fortweb', files: [] });
+    await writeFile(path.join(zipDir, 'assets/payload/manifest.json'), mfContent);
+    const zipPath = path.join(zipDir, 'test.apk');
+    execFileSync('python3', ['-c', `
+import zipfile, os
+zp = '${zipPath}'
+root = '${zipDir}'
+with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for dirpath, dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            fp = os.path.join(dirpath, fn)
+            arcname = os.path.relpath(fp, root)
+            zf.write(fp, arcname)
+    # Write a traversal payload member
+    zf.writestr('assets/payload/../outside.txt', 'escaped')
+`], { timeout: 10000 });
+    // Verify the traversal member exists in the ZIP
+    const list = execFileSync('unzip', ['-Z', '-1', zipPath], { encoding: 'utf-8' });
+    assert.ok(list.includes('assets/payload/../outside.txt'), 'fixture must contain traversal member');
+    await assert.rejects(() => verifyApk(zipPath), /unsafe payload member/);
   });
 
   it('26. backslash member fails', async () => {
-    // Same pattern — backslash in APK member would fail isSafeRelative
-    assert.ok(true, 'backslash paths caught by isSafeRelative in member validation');
+    // Build APK with a backslash path using Python zipfile
+    const zipDir = path.join(FIXTURE_DIR, `apk-${seq()}-bs`);
+    await mkdir(path.join(zipDir, 'assets/payload'), { recursive: true });
+    const mfContent = JSON.stringify({ package_name: 'fortweb-runtime', producer: 'fortweb', files: [] });
+    await writeFile(path.join(zipDir, 'assets/payload/manifest.json'), mfContent);
+    const zipPath = path.join(zipDir, 'test.apk');
+    execFileSync('python3', ['-c', `
+import zipfile, os
+zp = '${zipPath}'
+root = '${zipDir}'
+with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for dirpath, dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            fp = os.path.join(dirpath, fn)
+            arcname = os.path.relpath(fp, root)
+            zf.write(fp, arcname)
+    # Write a backslash-bearing payload member
+    zf.writestr('assets/payload\\\\evil.txt', 'backslash')
+`], { timeout: 10000 });
+    // Verify the backslash member exists in the ZIP
+    const list = execFileSync('unzip', ['-Z', '-1', zipPath], { encoding: 'utf-8' });
+    assert.ok(list.includes('assets/payload\\evil.txt'), 'fixture must contain backslash member');
+    await assert.rejects(() => verifyApk(zipPath), /unsafe payload member/);
   });
 
   it('27. APK digest mismatch fails', async () => {

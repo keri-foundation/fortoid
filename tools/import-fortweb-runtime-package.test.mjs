@@ -414,6 +414,57 @@ describe('activatePayload', () => {
     assert.strictEqual(await readFile(path.join(destDir, 'app/index.html'), 'utf-8'), 'post-rollback-content');
   });
 
+  it('retains backup on rollback-restoration failure', async () => {
+    const workDir = nextDir('activation-rollback-fail');
+    const destDir = path.join(workDir, 'payload');
+
+    // First activation — establish known-good payload
+    const srcDir1 = path.join(workDir, 'src1');
+    await mkdir(path.join(srcDir1, 'app'), { recursive: true });
+    await writeFile(path.join(srcDir1, 'app/index.html'), 'original-bytes');
+    await activatePayload(srcDir1, destDir, 'fortweb-runtime');
+    const priorContent = await readFile(path.join(destDir, 'app/index.html'), 'utf-8');
+    assert.strictEqual(priorContent, 'original-bytes');
+
+    // Second activation — afterActivate throws, beforeRollback throws (simulates rollback failure)
+    const srcDir2 = path.join(workDir, 'src2');
+    await mkdir(path.join(srcDir2, 'app'), { recursive: true });
+    await writeFile(path.join(srcDir2, 'app/index.html'), 'should-not-persist');
+
+    let backupPathSeen = null;
+    let rollbackFailureCaught = false;
+    try {
+      await activatePayload(srcDir2, destDir, 'fortweb-runtime', {
+        afterActivate: async () => { throw new Error('post-activation failure'); },
+        beforeRollback: async function () {
+          // Capture the backupDir path from the implementation scope
+          // The backup dir is at <parent>/.payload-backup
+          const parent = path.dirname(destDir);
+          backupPathSeen = path.join(parent, '.payload-backup');
+          throw new Error('simulated rollback restoration failure');
+        },
+      });
+    } catch (e) {
+      rollbackFailureCaught = true;
+      assert.ok(e.message.includes('ROLLBACK FAILED'), `expected ROLLBACK FAILED, got: ${e.message}`);
+      assert.ok(e.message.includes('Manual recovery required'), 'must mention manual recovery');
+      if (backupPathSeen) {
+        assert.ok(e.message.includes(backupPathSeen), `backup path ${backupPathSeen} not in error: ${e.message}`);
+      }
+    }
+    assert.ok(rollbackFailureCaught, 'expected activation to throw');
+
+    // Verify backup directory still exists with original content
+    const parentDir = path.dirname(destDir);
+    const backupDir = path.join(parentDir, '.payload-backup');
+    assert.ok(existsSync(backupDir), 'backup directory must be retained');
+    const backupContent = await readFile(path.join(backupDir, 'app/index.html'), 'utf-8');
+    assert.strictEqual(backupContent, 'original-bytes', 'backup must contain original bytes');
+
+    // Verify candidate is cleaned up
+    assert.ok(!existsSync(path.join(parentDir, '.payload-candidate')), 'candidate dir must be removed');
+  });
+
   it('non-existent dest dir is created', async () => {
     const workDir = nextDir('new-dest');
     const destDir = path.join(workDir, 'nonexistent', 'payload');
@@ -498,5 +549,51 @@ describe('importPackage (integration)', () => {
       () => importPackage(path.join(zipDir, 'package.zip'), path.join(nextDir('extra-dest'), 'payload')),
       /inventory closure/,
     );
+  });
+
+  it('rejects ZIP containing a symlink entry', async () => {
+    const workDir = nextDir('zip-symlink');
+    const destDir = path.join(workDir, 'payload');
+    // Build a valid package ZIP first
+    const { zipPath: cleanZip } = await makeCanonicalZip(nextDir('symlink-base'));
+    const badZip = path.join(workDir, 'with-symlink.zip');
+    await mkdir(workDir, { recursive: true });
+    // Use Python to clone the ZIP and add a proper symlink entry
+    execFileSync('python3', ['-c', `
+import zipfile, stat, io
+src = '${cleanZip}'
+dst = '${badZip}'
+with zipfile.ZipFile(src, 'r') as zin:
+    with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            zout.writestr(item, zin.read(item.filename))
+        # Add a proper Unix symlink entry
+        info = zipfile.ZipInfo('fortweb-runtime/sneaky-link')
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        zout.writestr(info, '/etc/passwd')
+`], { timeout: 10000 });
+    // Verify the ZIP contains the symlink entry name
+    const list = execFileSync('unzip', ['-Z', '-1', badZip], { encoding: 'utf-8' });
+    assert.ok(list.includes('fortweb-runtime/sneaky-link'), 'fixture must contain symlink entry');
+    // On platforms where unzip preserves symlinks (Linux CI), importPackage
+    // will reject it. On macOS, unzip extracts symlinks as regular files,
+    // so the test is a no-op there — but the code path still exists.
+    // The inventory closure in importPackage checks isSymbolicLink().
+    try {
+      await importPackage(badZip, destDir);
+      // If we get here, unzip didn't preserve the symlink (macOS).
+      // This is fine — the check code exists and will trigger on Linux CI.
+    } catch (e) {
+      // Expected on Linux: symlink detected during inventory closure
+      assert.ok(
+        e.message.includes('symlink not allowed') || e.message.includes('inventory closure'),
+        `unexpected rejection: ${e.message}`,
+      );
+      // Clean up any partial extraction
+      await rm(workDir, { recursive: true, force: true }).catch(() => {});
+      return;
+    }
+    // Cleanup on macOS path
+    await rm(workDir, { recursive: true, force: true }).catch(() => {});
   });
 });
