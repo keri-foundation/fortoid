@@ -338,31 +338,80 @@ describe('validateRuntimeRequirements', () => {
 // ── Activation ──────────────────────────────────────────────────────────────
 
 describe('activatePayload', () => {
-  it('activates payload and rollback preserves prior', async () => {
-    const workDir = nextDir('activation');
+  it('activates payload successfully', async () => {
+    const workDir = nextDir('activation-ok');
     const destDir = path.join(workDir, 'payload');
     const srcDir = path.join(workDir, 'src');
-
-    // Create source
     await mkdir(path.join(srcDir, 'app'), { recursive: true });
-    await writeFile(path.join(srcDir, 'app/index.html'), 'new-content');
-
-    // First activation
+    await writeFile(path.join(srcDir, 'app/index.html'), 'content-v1');
     await activatePayload(srcDir, destDir, 'fortweb-runtime');
-    const afterFirst = await readFile(path.join(destDir, 'app/index.html'), 'utf-8');
-    assert.strictEqual(afterFirst, 'new-content');
+    assert.strictEqual(await readFile(path.join(destDir, 'app/index.html'), 'utf-8'), 'content-v1');
+  });
 
-    // Verify rollback: inject failure by making dest non-writable
-    // Instead, simulate failure: activation with a source dir that fails during copy
-    // For rollback proof, we'll verify the existing payload is preserved after a failed activation
+  it('replaces existing payload successfully', async () => {
+    const workDir = nextDir('activation-replace');
+    const destDir = path.join(workDir, 'payload');
+    const srcDir1 = path.join(workDir, 'src1');
+    await mkdir(path.join(srcDir1, 'app'), { recursive: true });
+    await writeFile(path.join(srcDir1, 'app/index.html'), 'v1');
+    await activatePayload(srcDir1, destDir, 'fortweb-runtime');
+
     const srcDir2 = path.join(workDir, 'src2');
     await mkdir(path.join(srcDir2, 'app'), { recursive: true });
-    await writeFile(path.join(srcDir2, 'app/index.html'), 'newer-content');
-
-    // Normal second activation works
+    await writeFile(path.join(srcDir2, 'app/index.html'), 'v2');
     await activatePayload(srcDir2, destDir, 'fortweb-runtime');
-    const afterSecond = await readFile(path.join(destDir, 'app/index.html'), 'utf-8');
-    assert.strictEqual(afterSecond, 'newer-content');
+    assert.strictEqual(await readFile(path.join(destDir, 'app/index.html'), 'utf-8'), 'v2');
+  });
+
+  it('rolls back and preserves prior payload on injected failure', async () => {
+    const workDir = nextDir('activation-rollback');
+    const destDir = path.join(workDir, 'payload');
+
+    // First activation — establish known-good payload
+    const srcDir1 = path.join(workDir, 'src1');
+    await mkdir(path.join(srcDir1, 'app'), { recursive: true });
+    await writeFile(path.join(srcDir1, 'app/index.html'), 'original-content');
+    await activatePayload(srcDir1, destDir, 'fortweb-runtime');
+
+    // Capture prior state
+    const priorFiles = await readdir(destDir, { recursive: true, withFileTypes: true });
+    const priorIndex = await readFile(path.join(destDir, 'app/index.html'), 'utf-8');
+    assert.strictEqual(priorIndex, 'original-content');
+
+    // Attempt replacement with injected failure
+    const srcDir2 = path.join(workDir, 'src2');
+    await mkdir(path.join(srcDir2, 'app'), { recursive: true });
+    await writeFile(path.join(srcDir2, 'app/index.html'), 'should-never-appear');
+
+    let failureCaught = false;
+    try {
+      await activatePayload(srcDir2, destDir, 'fortweb-runtime', {
+        beforeActivate: async () => { throw new Error('injected activation failure'); },
+      });
+    } catch (e) {
+      failureCaught = true;
+      assert.ok(e.message.includes('injected activation failure'));
+      assert.ok(e.message.includes('previous payload preserved'));
+    }
+    assert.ok(failureCaught, 'expected activation to throw');
+
+    // Verify old payload is restored byte-for-byte
+    assert.ok(existsSync(path.join(destDir, 'app/index.html')), 'old payload should still exist');
+    const restoredIndex = await readFile(path.join(destDir, 'app/index.html'), 'utf-8');
+    assert.strictEqual(restoredIndex, 'original-content', 'old payload content must be identical');
+
+    // Verify candidate and backup dirs are cleaned up
+    const parentDir = path.dirname(destDir);
+    const parentEntries = await readdir(parentDir);
+    assert.ok(!parentEntries.some(e => e.startsWith('.payload-candidate')), 'candidate dir should be removed');
+    assert.ok(!parentEntries.some(e => e.startsWith('.payload-backup')), 'backup dir should be removed');
+
+    // Verify a subsequent valid activation still succeeds
+    const srcDir3 = path.join(workDir, 'src3');
+    await mkdir(path.join(srcDir3, 'app'), { recursive: true });
+    await writeFile(path.join(srcDir3, 'app/index.html'), 'post-rollback-content');
+    await activatePayload(srcDir3, destDir, 'fortweb-runtime');
+    assert.strictEqual(await readFile(path.join(destDir, 'app/index.html'), 'utf-8'), 'post-rollback-content');
   });
 
   it('non-existent dest dir is created', async () => {
@@ -372,8 +421,7 @@ describe('activatePayload', () => {
     await mkdir(path.join(srcDir, 'app'), { recursive: true });
     await writeFile(path.join(srcDir, 'app/index.html'), 'hello');
     await activatePayload(srcDir, destDir, 'fortweb-runtime');
-    const content = await readFile(path.join(destDir, 'app/index.html'), 'utf-8');
-    assert.strictEqual(content, 'hello');
+    assert.strictEqual(await readFile(path.join(destDir, 'app/index.html'), 'utf-8'), 'hello');
   });
 });
 
@@ -411,15 +459,44 @@ describe('importPackage (integration)', () => {
     const zipDir = nextDir('bad-name');
     const m = makeManifest({ package_name: 'wrong-pkg' });
     const rr = makeRR();
-    await makeZip(zipDir, {
-      'fortweb-runtime/manifest.json': JSON.stringify(m),
-      'fortweb-runtime/checksums.sha256': m.files.map(f => `${f.sha256}  ${f.path}`).join('\n') + '\n',
-      'fortweb-runtime/app/index.html': `idx-${testSeq}`,
-      'fortweb-runtime/contracts/runtime-requirements.json': JSON.stringify(rr),
-    });
+    const rrContent = JSON.stringify(rr);
+    const idxContent = `idx-${testSeq}`;
+    m.files = [
+      { path: 'app/index.html', sha256: sha256(Buffer.from(idxContent)), bytes: Buffer.byteLength(idxContent) },
+      { path: 'contracts/runtime-requirements.json', sha256: sha256(Buffer.from(rrContent)), bytes: Buffer.byteLength(rrContent) },
+    ];
+    const manifestContent = JSON.stringify(m);
+    const files = {
+      'fortweb-runtime/manifest.json': manifestContent,
+      'fortweb-runtime/checksums.sha256': `${sha256(Buffer.from(manifestContent))}  manifest.json\n`,
+      'fortweb-runtime/app/index.html': idxContent,
+      'fortweb-runtime/contracts/runtime-requirements.json': rrContent,
+    };
+    await makeZip(zipDir, files);
     await assert.rejects(
       () => importPackage(path.join(zipDir, 'package.zip'), path.join(nextDir('bad-name-dest'), 'payload')),
       /package_name/,
+    );
+  });
+
+  it('rejects unlisted file not in manifest inventory', async () => {
+    const zipDir = nextDir('extra-file');
+    const { manifest } = await makeCanonicalZip(nextDir('extra-base'));
+    // Add an extra file not in the manifest
+    const manifestContent = JSON.stringify(manifest);
+    const rrContent = JSON.stringify(makeRR());
+    const idxContent = `idx-${testSeq}`;
+    const extraFiles = {
+      'fortweb-runtime/manifest.json': manifestContent,
+      'fortweb-runtime/checksums.sha256': `${sha256(Buffer.from(manifestContent))}  manifest.json\n`,
+      'fortweb-runtime/app/index.html': idxContent,
+      'fortweb-runtime/contracts/runtime-requirements.json': rrContent,
+      'fortweb-runtime/secret.txt': 'not-in-manifest',
+    };
+    await makeZip(zipDir, extraFiles);
+    await assert.rejects(
+      () => importPackage(path.join(zipDir, 'package.zip'), path.join(nextDir('extra-dest'), 'payload')),
+      /inventory closure/,
     );
   });
 });

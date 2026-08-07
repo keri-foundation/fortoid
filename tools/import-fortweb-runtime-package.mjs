@@ -233,7 +233,7 @@ export async function validateRuntimeRequirements(extractedDir, manifest) {
 
 // ── Transactional activation ────────────────────────────────────────────────
 
-export async function activatePayload(extractedDir, destDir, packageName) {
+export async function activatePayload(extractedDir, destDir, packageName, opts = {}) {
   const parent = path.dirname(destDir);
   const candidateDir = path.join(parent, '.payload-candidate');
   const backupDir = path.join(parent, '.payload-backup');
@@ -259,6 +259,10 @@ export async function activatePayload(extractedDir, destDir, packageName) {
 
     // Backup existing → activate candidate
     if (existsSync(destDir)) await rename(destDir, backupDir);
+
+    // Allow tests to inject failure after backup but before activation
+    if (opts.beforeActivate) await opts.beforeActivate();
+
     await rename(candidateDir, destDir);
 
     // Remove backup
@@ -322,6 +326,23 @@ export async function importPackage(zipPath, destDir = PAYLOAD_DEST) {
 
     const rrErr = await validateRuntimeRequirements(pkgRoot, manifest);
     if (rrErr.length) throw new ImportError(`requirements:\n  - ${rrErr.join('\n  - ')}`);
+
+    // Inventory closure: reject files outside manifest.files[] + package metadata
+    const manifestPaths = new Set(manifest.files.map(f => f.path));
+    manifestPaths.add(MANIFEST_FILENAME);
+    manifestPaths.add(CHECKSUM_FILENAME);
+    const allExtracted = await readdir(pkgRoot, { recursive: true, withFileTypes: true });
+    const invErrs = [];
+    for (const ent of allExtracted) {
+      if (!ent.isFile()) continue;
+      const rel = path.relative(pkgRoot, path.join(ent.parentPath || ent.path, ent.name));
+      if (ent.isSymbolicLink()) {
+        invErrs.push(`symlink not allowed: ${rel}`);
+      } else if (!manifestPaths.has(rel)) {
+        invErrs.push(`file not in manifest inventory: ${rel}`);
+      }
+    }
+    if (invErrs.length) throw new ImportError(`inventory closure:\n  - ${invErrs.join('\n  - ')}`);
 
     return await activatePayload(pkgRoot, destDir, EXPECTED_PACKAGE_NAME);
   } finally {

@@ -67,3 +67,130 @@ jobs:
 
       - name: Run debug lint
         run: ./gradlew :app:lintDebug --no-daemon
+
+  package-consumer:
+    name: Runtime package consumer and APK integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out Fortoid
+        uses: actions/checkout@v4
+
+      - name: Check out FortWeb
+        uses: actions/checkout@v4
+        with:
+          repository: keri-foundation/fortweb
+          ref: 84f76995cbf25a8432d422776ca34f863b0f99ac
+          path: .deps/fortweb
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install FortWeb dependencies
+        run: npm ci
+        working-directory: .deps/fortweb
+
+      - name: Build FortWeb runtime
+        run: npm run build:runtime
+        working-directory: .deps/fortweb
+
+      - name: Generate FortWeb runtime package ZIP
+        run: node tools/package-runtime.mjs
+        working-directory: .deps/fortweb
+
+      - name: Run platform-config validator
+        run: node tools/validate-runtime-platform-config.mjs
+
+      - name: Run platform-config tests
+        run: node --test tools/validate-runtime-platform-config.test.mjs
+
+      - name: Run importer tests
+        run: node --test tools/import-fortweb-runtime-package.test.mjs
+
+      - name: Import runtime package
+        run: |
+          ZIP=$(ls .deps/fortweb/.tmp/runtime-packages/*.zip | head -1)
+          node tools/import-fortweb-runtime-package.mjs "$ZIP"
+
+      - name: Validate staged payload
+        run: node tools/validate-staged-payload.mjs
+
+      - name: Verify exact inventory match
+        shell: bash
+        run: |
+          PAYLOAD_DIR="app/src/main/assets/payload"
+          MANIFEST="$PAYLOAD_DIR/manifest.json"
+          echo "--- Manifest identity ---"
+          node -e "
+            const m = JSON.parse(require('fs').readFileSync('$MANIFEST','utf-8'));
+            console.log('package:', m.package_name, 'producer:', m.producer, 'profile:', m.payload_profile);
+            console.log('files declared:', m.files.length);
+          "
+          echo "--- Staged file count ---"
+          find "$PAYLOAD_DIR" -type f | wc -l
+          echo "--- Files outside manifest ---"
+          node -e "
+            const fs = require('fs'), path = require('path');
+            const m = JSON.parse(fs.readFileSync('$MANIFEST','utf-8'));
+            const allowed = new Set(m.files.map(f => f.path));
+            allowed.add('manifest.json');
+            allowed.add('checksums.sha256');
+            const staged = fs.readdirSync('$PAYLOAD_DIR', { recursive: true, withFileTypes: true })
+              .filter(e => e.isFile())
+              .map(e => path.relative('$PAYLOAD_DIR', path.join(e.parentPath || e.path, e.name)));
+            const extra = staged.filter(p => !allowed.has(p));
+            if (extra.length) { console.error('UNEXPECTED FILES:', extra); process.exit(1); }
+            console.log('All staged files accounted for in manifest inventory');
+          "
+
+      - name: Verify no stale artifacts
+        shell: bash
+        run: |
+          PAYLOAD_DIR="app/src/main/assets/payload"
+          for stale in "android-payload-manifest.json" "fortweb/app/runtime-origin-contract.json"; do
+            if [ -f "$PAYLOAD_DIR/$stale" ]; then
+              echo "FAIL: stale artifact present: $stale"
+              exit 1
+            fi
+          done
+          echo "No stale Android-generated artifacts present"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Inspect APK payload
+        shell: bash
+        run: |
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
+          if [ -z "$APK" ]; then echo "FAIL: no APK found"; exit 1; fi
+          echo "APK: $APK"
+          # List payload assets inside APK
+          unzip -l "$APK" | grep -E 'assets/payload/' | head -10 || echo "(no payload assets found — check path)"
+          # Verify key files exist in APK
+          for f in "assets/payload/manifest.json" "assets/payload/checksums.sha256" "assets/payload/contracts/runtime-requirements.json" "assets/payload/app/index.html"; do
+            if unzip -l "$APK" | grep -q "$f"; then
+              echo "OK: $f"
+            else
+              echo "MISSING: $f"
+            fi
+          done
+          # Verify stale artifacts absent
+          for stale in "android-payload-manifest.json" "runtime-origin-contract.json"; do
+            if unzip -l "$APK" | grep -q "$stale"; then
+              echo "FAIL: stale artifact in APK: $stale"
+              exit 1
+            fi
+          done
+          echo "APK inspection complete"
