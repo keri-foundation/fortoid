@@ -46,7 +46,7 @@ const SECURITY_MECHANISMS = ['https-tls-like', 'custom-scheme-tls-like'];
 const BRIDGE_PROVENANCES = ['main-frame-only'];
 const BRIDGE_ORIGIN_VALIDATIONS = ['exact-scheme-host-match'];
 const ENTRYPOINT_SOURCES = ['manifest-declared', 'deterministic-constant'];
-const ENTRYPOINT_FALLBACKS = ['none', 'payload-missing-placeholder'];
+const ENTRYPOINT_FALLBACKS = ['none'];
 
 function checkType(value, expected, label) {
   const actual = typeof value;

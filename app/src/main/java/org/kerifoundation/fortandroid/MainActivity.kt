@@ -54,7 +54,6 @@ private const val TRUSTED_SCHEME = "https"
 private const val PAYLOAD_URL = "https://appassets.androidplatform.net/index.html"
 private const val PAYLOAD_ASSET_PREFIX = "payload/"
 private const val PAYLOAD_INDEX_ASSET_PATH = "payload/index.html"
-private const val PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH = "bootstrap/payload-missing.html"
 private const val PYODIDE_CDN_HOST = "cdn.jsdelivr.net"
 private const val PYODIDE_CDN_PATH_PREFIX = "/pyodide/v"
 private const val BUNDLED_PYODIDE_VERSION = "0.29.3"
@@ -517,12 +516,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             val resolved = delegate.handle(assetPath)?.let { assetPath to it }
-                ?: if (assetPath == PAYLOAD_INDEX_ASSET_PATH) {
-                    delegate.handle(PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH)
-                        ?.let { PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH to it }
-                } else {
-                    null
-                }
                 ?: return null
 
             val resolvedAssetPath = resolved.first

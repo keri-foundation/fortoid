@@ -158,12 +158,15 @@ const CAPABILITY_PREDICATES = {
 
   no_fallback_shell_substitution(rr, cfg) {
     const ep = cfg?.entrypoint;
-    // The payload-missing-placeholder IS a fallback shell substitution.
-    // This directly contradicts the producer requirement.
     if (ep?.fallback === 'payload-missing-placeholder') {
       return { compatible: false, reason: 'payload-missing-placeholder fallback contradicts no_fallback_shell_substitution', evidence: 'CONTRADICTED' };
     }
-    return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
+    if (ep?.fallback === 'none') {
+      // Missing payload files return null; WebViewAssetLoader produces a
+      // not-found response. No shell substitution occurs.
+      return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
+    }
+    return { compatible: false, reason: `unknown fallback mechanism: "${ep?.fallback || '(missing)'}"`, evidence: 'FAIL-CLOSED' };
   },
 };
 

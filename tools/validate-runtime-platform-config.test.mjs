@@ -159,6 +159,13 @@ describe('Android mechanism enforcement', () => {
     assert.ok(errors.some(e => e.includes('entrypoint.source')));
   });
 
+  it('rejects payload-missing-placeholder fallback (obsolete)', () => {
+    const config = loadGood();
+    config.entrypoint.fallback = 'payload-missing-placeholder';
+    const errors = validatePlatformConfig(config);
+    assert.ok(errors.some(e => e.includes('entrypoint.fallback') || e.includes('fallback')));
+  });
+
   it('rejects iOS fixed-namespace storage partition on Android', () => {
     const config = loadGood();
     config.platform = 'android-webview';

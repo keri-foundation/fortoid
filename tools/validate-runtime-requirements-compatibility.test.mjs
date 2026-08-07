@@ -271,13 +271,24 @@ describe('validateCompatibility — capabilities', () => {
     assert.ok(wa.evidence === 'UNPROVEN', `expected UNPROVEN, got ${wa.evidence}`);
   });
 
-  it('20. no_fallback_shell_substitution is CONTRADICTED', async () => {
+  it('20. no_fallback_shell_substitution is SATISFIED with fallback:none', async () => {
     const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
     const nf = r.capabilities?.find(c => c.capability === 'no_fallback_shell_substitution');
     assert.ok(nf, 'no_fallback_shell_substitution must exist');
-    assert.ok(!nf.compatible, 'must be NOT-SATISFIED');
+    assert.ok(nf.compatible, 'must be SATISFIED with fallback:none');
+    assert.ok(nf.evidence !== 'CONTRADICTED', 'must not be CONTRADICTED');
+  });
+
+  it('20a. no_fallback_shell_substitution rejects payload-missing-placeholder', async () => {
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    cfg.entrypoint.fallback = 'payload-missing-placeholder';
+    const { dir } = await stageFixture('fallback-contradicted', {}, cfg);
+    const cfgPath = path.join(dir, 'runtime-platform-config.json');
+    const r = await validateCompatibility(dir, cfgPath);
+    const nf = r.capabilities?.find(c => c.capability === 'no_fallback_shell_substitution');
+    assert.ok(nf, 'must evaluate');
+    assert.ok(!nf.compatible, 'payload-missing-placeholder must be rejected');
     assert.ok(nf.evidence === 'CONTRADICTED', `expected CONTRADICTED, got ${nf.evidence}`);
-    assert.ok(nf.reason.includes('payload-missing-placeholder'), 'must mention payload-missing-placeholder');
   });
 });
 
@@ -354,8 +365,14 @@ describe('validateCompatibility — edge cases', () => {
     assert.ok(errs.some(e => e.message.includes('forbidden_behaviors')));
   });
 
-  it('26. overall result is INCOMPATIBLE for current real config', async () => {
+  it('26. overall result is INCOMPATIBLE (3 gaps remain)', async () => {
     const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
-    assert.strictEqual(r.compatible, false, 'current config must be INCOMPATIBLE due to UNPROVEN capabilities');
+    assert.strictEqual(r.compatible, false, 'must remain INCOMPATIBLE — persistent_storage, worker, service_worker UNPROVEN');
+    // 8/10 capabilities SATISFIED
+    const satCaps = r.capabilities.filter(c => c.compatible).length;
+    assert.ok(satCaps >= 8, `expected >=8 SATISFIED capabilities, got ${satCaps}`);
+    // no_fallback_shell_substitution must be SATISFIED
+    const nf = r.capabilities.find(c => c.capability === 'no_fallback_shell_substitution');
+    assert.ok(nf?.compatible, 'no_fallback_shell_substitution must be SATISFIED');
   });
 });
