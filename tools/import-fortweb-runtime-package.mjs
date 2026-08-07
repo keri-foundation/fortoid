@@ -273,17 +273,31 @@ export async function activatePayload(extractedDir, destDir, packageName, opts =
     return `staged ${count} files to ${destDir}`;
   } catch (e) {
     // Rollback
+    let rollbackFailed = false;
     try {
       if (existsSync(backupDir)) {
         if (existsSync(destDir)) await rm(destDir, { recursive: true, force: true });
         await rename(backupDir, destDir);
       }
-    } catch (_) { /* best-effort */ }
+    } catch (rollbackErr) {
+      rollbackFailed = true;
+    }
     await rm(candidateDir, { recursive: true, force: true }).catch(() => {});
+    if (rollbackFailed) {
+      throw new ImportError(
+        `activation failed: ${e.message}. ROLLBACK FAILED — ` +
+        `backup may remain at ${backupDir}. Previous payload at ${destDir} may be corrupted. ` +
+        `Manual recovery required.`
+      );
+    }
     throw new ImportError(`activation failed: ${e.message} (previous payload preserved)`);
   } finally {
     await rm(candidateDir, { recursive: true, force: true }).catch(() => {});
-    await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    // Only remove backup if rollback succeeded (it was restored to destDir)
+    if (existsSync(backupDir)) {
+      // Backup still exists — rollback may have failed. Leave it for recovery.
+      // The caller will see the rollback-failed error message.
+    }
   }
 }
 
@@ -328,17 +342,20 @@ export async function importPackage(zipPath, destDir = PAYLOAD_DEST) {
     if (rrErr.length) throw new ImportError(`requirements:\n  - ${rrErr.join('\n  - ')}`);
 
     // Inventory closure: reject files outside manifest.files[] + package metadata
+    // Order matters: check symlinks before skipping non-files
     const manifestPaths = new Set(manifest.files.map(f => f.path));
     manifestPaths.add(MANIFEST_FILENAME);
     manifestPaths.add(CHECKSUM_FILENAME);
     const allExtracted = await readdir(pkgRoot, { recursive: true, withFileTypes: true });
     const invErrs = [];
     for (const ent of allExtracted) {
-      if (!ent.isFile()) continue;
       const rel = path.relative(pkgRoot, path.join(ent.parentPath || ent.path, ent.name));
       if (ent.isSymbolicLink()) {
         invErrs.push(`symlink not allowed: ${rel}`);
-      } else if (!manifestPaths.has(rel)) {
+        continue;
+      }
+      if (!ent.isFile()) continue; // directories are structural
+      if (!manifestPaths.has(rel)) {
         invErrs.push(`file not in manifest inventory: ${rel}`);
       }
     }
