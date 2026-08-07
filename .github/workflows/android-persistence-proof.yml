@@ -46,6 +46,7 @@ jobs:
       - name: Install system image and create AVD
         run: |
           export ANDROID_AVD_HOME="$HOME/.android/avd"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
           mkdir -p "$ANDROID_AVD_HOME"
           echo "y" | sdkmanager "system-images;android-36;google_apis;x86_64"
           echo "no" | avdmanager create avd \
@@ -53,6 +54,7 @@ jobs:
             --package "system-images;android-36;google_apis;x86_64" \
             --device "pixel_9" \
             --force
+          $ANDROID_HOME/emulator/emulator -list-avds
 
       - name: Start emulator
         timeout-minutes: 8
@@ -95,6 +97,7 @@ jobs:
           echo "KEY=$KEY VALUE=$VALUE"
 
       - name: Run PersistenceWriteTest
+        id: write
         run: |
           OUTPUT=$(adb shell am instrument -w -r \
             -e persistenceKey "${{ steps.genkey.outputs.key }}" \
@@ -104,25 +107,25 @@ jobs:
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "OK (" || { echo "FAIL: write phase did not report OK"; exit 1; }
           WRITE_PID=$(echo "$OUTPUT" | grep -oP 'WRITE_PID=\K\d+' || echo "0")
+          if [ "$WRITE_PID" = "0" ]; then echo "FAIL: could not capture write PID"; exit 1; fi
           echo "write_pid=$WRITE_PID" >> $GITHUB_OUTPUT
           echo "Write PID: $WRITE_PID"
 
-      # ── Lifecycle boundary: force-stop ────────────────────────────────
-
       - name: Force-stop target process
         run: |
+          WRITE_PID="${{ steps.write.outputs.write_pid }}"
+          # Verify process exists before stopping
+          adb shell ps | grep "org.kerifoundation.fortandroid" || { echo "FAIL: target process not found before force-stop"; exit 1; }
           adb shell am force-stop org.kerifoundation.fortandroid
-          sleep 2
-          # Verify old PID gone
+          sleep 3
           if adb shell ps | grep -q "org.kerifoundation.fortandroid"; then
-            echo "WARNING: process still running after force-stop"
-          else
-            echo "Process terminated — OK"
+            echo "FAIL: process $WRITE_PID still running after force-stop"
+            exit 1
           fi
-
-      # ── Phase B: Read ─────────────────────────────────────────────────
+          echo "Process $WRITE_PID terminated — OK"
 
       - name: Run PersistenceReadTest
+        id: read
         run: |
           OUTPUT=$(adb shell am instrument -w -r \
             -e persistenceKey "${{ steps.genkey.outputs.key }}" \
@@ -132,14 +135,21 @@ jobs:
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "OK (" || { echo "FAIL: read phase did not report OK"; exit 1; }
           READ_PID=$(echo "$OUTPUT" | grep -oP 'READ_PID=\K\d+' || echo "0")
+          if [ "$READ_PID" = "0" ]; then echo "FAIL: could not capture read PID"; exit 1; fi
+          echo "read_pid=$READ_PID" >> $GITHUB_OUTPUT
           echo "Read PID: $READ_PID"
 
       - name: Verify PID changed
         run: |
-          WRITE_PID="${{ steps.genkey.outputs.write_pid }}"
-          if [ "$WRITE_PID" = "0" ]; then echo "FAIL: could not capture write PID"; exit 1; fi
+          WRITE_PID="${{ steps.write.outputs.write_pid }}"
+          READ_PID="${{ steps.read.outputs.read_pid }}"
           echo "Write PID: $WRITE_PID"
-          echo "Evidence: process restart confirmed (write PID != read PID)"
+          echo "Read PID: $READ_PID"
+          if [ "$WRITE_PID" = "$READ_PID" ]; then
+            echo "FAIL: write and read PIDs are identical — process was not restarted"
+            exit 1
+          fi
+          echo "PASS: process restart confirmed (write PID $WRITE_PID != read PID $READ_PID)"
 
       - name: Upload test reports on failure
         if: failure()

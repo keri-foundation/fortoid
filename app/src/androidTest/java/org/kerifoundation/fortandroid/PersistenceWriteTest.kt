@@ -42,11 +42,7 @@ class PersistenceWriteTest {
                 override fun shouldInterceptRequest(v: WebView, r: android.webkit.WebResourceRequest) =
                     loader.shouldInterceptRequest(r.url)
                 override fun onPageFinished(v: WebView, url: String?) {
-                    v.evaluateJavascript(
-                        "window.__probeParams={key:'$key',value:'$value'};" +
-                        "var s=document.createElement('script');" +
-                        "s.src='persistence-probe/write.html';" +
-                        "document.head.appendChild(s);", null)
+                    v.loadUrl("https://appassets.androidplatform.net/persistence-probe/write.html?key=$key&value=${java.net.URLEncoder.encode(value, "UTF-8")}")
                     poll(v, latch) { r -> output = r }
                 }
             }

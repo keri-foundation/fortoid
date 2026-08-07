@@ -46,6 +46,7 @@ jobs:
       - name: Install system image and create AVD
         run: |
           export ANDROID_AVD_HOME="$HOME/.android/avd"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
           mkdir -p "$ANDROID_AVD_HOME"
           echo "y" | sdkmanager "system-images;android-36;google_apis;x86_64"
           echo "no" | avdmanager create avd \
@@ -53,6 +54,7 @@ jobs:
             --package "system-images;android-36;google_apis;x86_64" \
             --device "pixel_9" \
             --force
+          $ANDROID_HOME/emulator/emulator -list-avds
 
       - name: Record emulator configuration
         run: |

@@ -7,6 +7,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewAssetLoader
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -87,28 +88,17 @@ class TestAssetPathHandler(
 class WorkerRuntimeProofTest {
 
     private lateinit var scenario: ActivityScenario<WorkerProbeActivity>
-    private lateinit var latch: CountDownLatch
-    private var probeResult: Map<String, Any?>? = null
-
-    @Before
-    fun setUp() {
-        latch = CountDownLatch(1)
-        probeResult = null
-    }
 
     @After
     fun tearDown() {
-        scenario.close()
+        if (::scenario.isInitialized) scenario.close()
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private fun createAssetLoader(activity: WorkerProbeActivity): WebViewAssetLoader {
-        val assetsHandler = WebViewAssetLoader.AssetsPathHandler(activity)
-        // Serve test assets from androidTest context, not app context.
-        // androidTest assets are at: app/src/androidTest/assets/
-        // WebViewAssetLoader.AssetsPathHandler uses the Activity's assets,
-        // which for an instrumentation Activity resolves androidTest/assets/.
+    private fun createAssetLoader(context: android.content.Context): WebViewAssetLoader {
+        // Use instrumentation context for androidTest assets
+        val assetsHandler = WebViewAssetLoader.AssetsPathHandler(context)
         val pathHandler = TestAssetPathHandler(assetsHandler)
         return WebViewAssetLoader.Builder()
             .addPathHandler("/", pathHandler)
@@ -122,8 +112,11 @@ class WorkerRuntimeProofTest {
         pagePath: String,
         timeoutSeconds: Long = 15
     ): Map<String, Any?> {
-        val loader = createAssetLoader(activity)
+        val instrCtx = InstrumentationRegistry.getInstrumentation().context
+        val loader = createAssetLoader(instrCtx)
         val url = "https://appassets.androidplatform.net/$pagePath"
+        val resultLatch = CountDownLatch(1)
+        val resultHolder = arrayOf<Map<String, Any?>?>(null)
 
         activity.runOnUiThread {
             activity.webView.webViewClient = object : androidx.webkit.WebViewClientCompat() {
@@ -135,21 +128,18 @@ class WorkerRuntimeProofTest {
                 }
 
                 override fun onPageFinished(view: WebView, url: String?) {
-                    // Poll for result
-                    view.postDelayed({
-                        pollForResult(view)
-                    }, 500)
+                    view.postDelayed({ pollForResult(view, resultHolder, resultLatch) }, 500)
                 }
             }
             activity.webView.loadUrl(url)
         }
 
-        assertTrue("timeout waiting for worker result", latch.await(timeoutSeconds, TimeUnit.SECONDS))
-        assertNotNull("probe result must not be null", probeResult)
-        return probeResult!!
+        assertTrue("timeout waiting for worker result", resultLatch.await(timeoutSeconds, TimeUnit.SECONDS))
+        assertNotNull("probe result must not be null", resultHolder[0])
+        return resultHolder[0]!!
     }
 
-    private fun pollForResult(view: WebView) {
+    private fun pollForResult(view: WebView, holder: Array<Map<String, Any?>?>, latch: CountDownLatch) {
         view.evaluateJavascript(
             "(function(){return JSON.stringify(window.__workerProbeResult||{state:'unknown'});})()"
         ) { json ->
@@ -162,14 +152,13 @@ class WorkerRuntimeProofTest {
                     for (key in result.keys()) {
                         map[key] = result.get(key)
                     }
-                    probeResult = map
+                    holder[0] = map
                     latch.countDown()
                 } else {
-                    // Still loading — poll again
-                    view.postDelayed({ pollForResult(view) }, 300)
+                    view.postDelayed({ pollForResult(view, holder, latch) }, 300)
                 }
             } catch (_: Exception) {
-                view.postDelayed({ pollForResult(view) }, 300)
+                view.postDelayed({ pollForResult(view, holder, latch) }, 300)
             }
         }
     }
@@ -179,83 +168,31 @@ class WorkerRuntimeProofTest {
     @Test
     fun dedicatedWorkerCompletesSameOriginRoundTrip() {
         scenario = ActivityScenario.launch(WorkerProbeActivity::class.java)
-
         scenario.onActivity { activity ->
-            // Run the actual test on a background thread so we can block on latch
-            Thread {
-                try {
-                    val result = loadPageAndPoll(activity, "worker-probe/index.html")
-
-                    activity.runOnUiThread {
-                        try {
-                            assertEquals("done", result["state"])
-
-                            @Suppress("UNCHECKED_CAST")
-                            val reply = result["reply"] as? Map<String, Any?>
-                            assertNotNull("worker must send a reply", reply)
-
-                            assertEquals(
-                                "pong",
-                                reply?.get("type"),
-                                "worker reply type must be pong"
-                            )
-                            assertEquals(
-                                "https://appassets.androidplatform.net",
-                                reply?.get("origin"),
-                                "worker origin must be trusted HTTPS origin"
-                            )
-                            assertEquals(
-                                true,
-                                reply?.get("isSecureContext"),
-                                "worker must report secure context"
-                            )
-                        } finally {
-                            // Ensure latch is counted down even on assertion failure
-                            if (latch.count > 0) latch.countDown()
-                        }
-                    }
-                } catch (e: Exception) {
-                    probeResult = mapOf("state" to "error", "category" to "PAGE_LOAD_FAILURE", "message" to e.message)
-                    latch.countDown()
-                }
-            }.start()
+            val result = loadPageAndPoll(activity, "worker-probe/index.html")
+            // Assertions on test thread (not UI thread)
+            assertEquals("done", result["state"])
+            @Suppress("UNCHECKED_CAST")
+            val reply = result["reply"] as? Map<String, Any?>
+            assertNotNull("worker must send a reply", reply)
+            assertEquals("pong", reply?.get("type"))
+            assertEquals("https://appassets.androidplatform.net", reply?.get("origin"))
+            assertEquals(true, reply?.get("isSecureContext"))
         }
-
-        assertTrue("test must complete", latch.await(20, TimeUnit.SECONDS))
-        assertEquals("done", probeResult?.get("state"))
     }
 
     @Test
     fun missingWorkerScriptFailsClosed() {
         scenario = ActivityScenario.launch(WorkerProbeActivity::class.java)
-
         scenario.onActivity { activity ->
-            Thread {
-                try {
-                    val result = loadPageAndPoll(activity, "worker-probe/missing-worker.html")
-
-                    activity.runOnUiThread {
-                        try {
-                            assertEquals("error", result["state"])
-                            val category = result["category"] as? String
-                            assertNotNull("error must have a category", category)
-                            assertTrue(
-                                "category must be WORKER_SCRIPT_LOAD_FAILURE, got: $category",
-                                category == "WORKER_SCRIPT_LOAD_FAILURE" || category == "WORKER_CONSTRUCTOR_FAILURE"
-                            )
-                        } finally {
-                            if (latch.count > 0) latch.countDown()
-                        }
-                    }
-                } catch (e: Exception) {
-                    probeResult = mapOf("state" to "error", "category" to "PAGE_LOAD_FAILURE", "message" to e.message)
-                    latch.countDown()
-                }
-            }.start()
+            val result = loadPageAndPoll(activity, "worker-probe/missing-worker.html")
+            assertEquals("error", result["state"])
+            val category = result["category"] as? String
+            assertNotNull("error must have a category", category)
+            assertTrue(
+                "category must indicate script load or constructor failure, got: $category",
+                category == "WORKER_SCRIPT_LOAD_FAILURE" || category == "WORKER_CONSTRUCTOR_FAILURE"
+            )
         }
-
-        assertTrue("test must complete", latch.await(20, TimeUnit.SECONDS))
-        val state = probeResult?.get("state")
-        assertTrue("must be in error state, got: $state", state == "error")
     }
 }

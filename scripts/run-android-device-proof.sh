@@ -43,22 +43,34 @@ echo "=== Device Classification ==="
 if echo "$MODEL" | grep -qi "S26"; then
   echo "Device IS a Galaxy S26 variant"
 else
-  echo "Device is NOT detected as Galaxy S26 (model: $MODEL)"
-  echo "Manual override required if this is incorrect."
+  echo "FAIL: Device is NOT a Galaxy S26 (model: $MODEL)"
+  echo "This script requires a physical Galaxy S26. Use --skip-model-check to override."
+  if [[ "${SKIP_MODEL_CHECK:-}" != "1" ]]; then
+    exit 1
+  fi
 fi
 
 echo ""
+echo "=== Building APKs ==="
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+
+echo ""
+echo "=== Installing APKs ==="
+$ADB install -r app/build/outputs/apk/debug/app-debug.apk
+$ADB install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+
+echo ""
 echo "=== Worker Proof ==="
-echo "Run: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.WorkerRuntimeProofTest"
+$ADB shell am instrument -w -r \
+  -e class org.kerifoundation.fortandroid.WorkerRuntimeProofTest \
+  org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner
 
 echo ""
 echo "=== Persistence Proof ==="
 KEY="probe-$(date +%s)-$RANDOM"
 VALUE="val-$(uuidgen 2>/dev/null || echo "val-$RANDOM")"
-echo "Generated key: $KEY"
-echo "Generated value: $VALUE"
+echo "Key: $KEY  Value: $VALUE"
 
-echo ""
 echo "--- Phase A: Write ---"
 $ADB shell am instrument -w -r \
   -e persistenceKey "$KEY" \
@@ -66,13 +78,10 @@ $ADB shell am instrument -w -r \
   -e class org.kerifoundation.fortandroid.PersistenceWriteTest \
   org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner
 
-echo ""
 echo "--- Force-stop ---"
 $ADB shell am force-stop org.kerifoundation.fortandroid
 sleep 2
-echo "Process stopped"
 
-echo ""
 echo "--- Phase B: Read ---"
 $ADB shell am instrument -w -r \
   -e persistenceKey "$KEY" \
@@ -82,4 +91,3 @@ $ADB shell am instrument -w -r \
 
 echo ""
 echo "=== Complete ==="
-echo "Review output above for OK/FAIL results."
