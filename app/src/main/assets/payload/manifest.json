@@ -1,0 +1,971 @@
+{
+  "schema_version": "1.0.0",
+  "package_version": "0.0.0",
+  "package_name": "fortweb-runtime",
+  "producer": "fortweb",
+  "payload_profile": "offline-runtime",
+  "fortweb_commit_sha": "84f76995cbf25a8432d422776ca34f863b0f99ac",
+  "runtime_origin": "https://appassets.androidplatform.net",
+  "entrypoint": "app/index.html",
+  "git_ref": "work/runtime-deployment-pipeline-20260608",
+  "base_path": "/fortweb/app/",
+  "runtime_root": ".",
+  "vendor_root": "vendor",
+  "wheels_root": "wheels",
+  "origin_contract": {
+    "schema": "fortweb.runtime-origin.v1",
+    "version": 1
+  },
+  "files": [
+    {
+      "path": "app/app/main.js",
+      "sha256": "725dc1153366dcd6ee21de6a3d2f7d429731691fc15f58c8b9398c18b51035de",
+      "bytes": 17578
+    },
+    {
+      "path": "app/app/page-factory.js",
+      "sha256": "d2a9953317bb20031cca84adaf8148f3ca014819ab8a6dab062fef0a41b32eca",
+      "bytes": 5793
+    },
+    {
+      "path": "app/app/page-feedback.js",
+      "sha256": "f58b914641d442ecd19d3620d55f2e7c4fabd3ac39b4c8fd71d239a703c31e33",
+      "bytes": 2527
+    },
+    {
+      "path": "app/app/page-loader.js",
+      "sha256": "c3cb6ad51444bcf46cde6680553bacb9567dd1c022e3dd9cdca0a409c8caf8e1",
+      "bytes": 2818
+    },
+    {
+      "path": "app/app/router.js",
+      "sha256": "16ebb16d584886ebc2372aeb53d0a4ca3638e619af3793a3a59bb5b073b00d38",
+      "bytes": 5212
+    },
+    {
+      "path": "app/app/session.js",
+      "sha256": "4af36dc0d03e6009e98e348f6f76467b1e932a45021c387514424fccbeb31da1",
+      "bytes": 726
+    },
+    {
+      "path": "app/app/shell.js",
+      "sha256": "26dee1c10c624dcb5cab89fa1233902facb892d26166df66afc54a3c552035b4",
+      "bytes": 9263
+    },
+    {
+      "path": "app/assets/brand/FullLogo.svg",
+      "sha256": "8d51c2a6947a98bc20e2399619b237f845dc69729a7f726d7e9e61ab6b2c3f88",
+      "bytes": 14648
+    },
+    {
+      "path": "app/assets/brand/FullLogoBlack.svg",
+      "sha256": "e251f04c6994989a450f897278bc813e2d43058314fa8d4acd87c1d07ae5dd0e",
+      "bytes": 14403
+    },
+    {
+      "path": "app/assets/brand/SymbolLogo.svg",
+      "sha256": "246dc757a83d8d52f48593374e1d983e0438820bdc3332fc7e70e3340f41c8b3",
+      "bytes": 5997
+    },
+    {
+      "path": "app/assets/brand/SymbolLogoBlack.svg",
+      "sha256": "4c6b6c2e30535cb8df7e4426b1940eb0d054f50889f81d2d5993241785bb4927",
+      "bytes": 5801
+    },
+    {
+      "path": "app/assets/fonts/SourceCodePro-Regular.ttf",
+      "sha256": "2001d0fc5fed1917913c88bff8e9bddb01bfb3771e7e261b8f28dd6fe52e9f00",
+      "bytes": 120456
+    },
+    {
+      "path": "app/assets/icons/add.svg",
+      "sha256": "7596cdd03cc13dcde2e3ba2b79b2d4782cf2d9998d55b692ba8843b1b4156ad4",
+      "bytes": 182
+    },
+    {
+      "path": "app/assets/icons/arrow_back.svg",
+      "sha256": "018a06af287d60efc6f92fc1ae01ed5ca44c24b3a686e55aec9844d17820c72b",
+      "bytes": 190
+    },
+    {
+      "path": "app/assets/icons/authenticate.svg",
+      "sha256": "106cdb920ea26e65f1190ee8a546d75544e210762a3d9feedeb06e5a102f5075",
+      "bytes": 473
+    },
+    {
+      "path": "app/assets/icons/badge.svg",
+      "sha256": "0abc05c28d88dcc582a70e8e4ad54e959aed836313a1910c01e909de8d9f09d9",
+      "bytes": 673
+    },
+    {
+      "path": "app/assets/icons/browse.svg",
+      "sha256": "2b300448f317aafb0564626e9f06eab28019c98a1a19620eed3eff6f630d4a77",
+      "bytes": 353
+    },
+    {
+      "path": "app/assets/icons/chevron_down.svg",
+      "sha256": "c3b6c157427117fe1d05b97492eb9bdeb30f0b4e1a9e5977958d96a234051718",
+      "bytes": 178
+    },
+    {
+      "path": "app/assets/icons/chevron_left.svg",
+      "sha256": "25bf90db164ec4e61328ec5b3d3bb2f5712c01a3058fe1c503afcfcdaaa231ff",
+      "bytes": 178
+    },
+    {
+      "path": "app/assets/icons/chevron_right.svg",
+      "sha256": "b4dbd6d9d6976337b1fcc5dcc588ea8feb6a8ea9425b267af0ca3375a5f83e58",
+      "bytes": 178
+    },
+    {
+      "path": "app/assets/icons/chevron_up.svg",
+      "sha256": "d8f215a847258dd21782dfc8e2791d5f8e8ff49ff2c25f676fcdafae6583de61",
+      "bytes": 179
+    },
+    {
+      "path": "app/assets/icons/close.svg",
+      "sha256": "85a05c144676f4a890101ccd48ff0d349752ea10fa95cd2af06568bdbcf2fbdf",
+      "bytes": 222
+    },
+    {
+      "path": "app/assets/icons/copy.svg",
+      "sha256": "b6afc48ffb603119477f83e3484c95f7b447fc1ba7b1ac3a6580621f2be0e174",
+      "bytes": 295
+    },
+    {
+      "path": "app/assets/icons/delete.svg",
+      "sha256": "befd306aa1a41899092c6721494e1845d952268d8e1989761b8dcbefe22f62c4",
+      "bytes": 367
+    },
+    {
+      "path": "app/assets/icons/edit.svg",
+      "sha256": "5e370cb9a1e97718157df1a94ebe3258e18f2259fed423cb19db3beb437da3e4",
+      "bytes": 329
+    },
+    {
+      "path": "app/assets/icons/export.svg",
+      "sha256": "8d190f2436013ff4f5a3042428a252142ab50a3f20ec4d998d17aee413472cbd",
+      "bytes": 255
+    },
+    {
+      "path": "app/assets/icons/first_page.svg",
+      "sha256": "d64b570757a61a884522bfc61b22b35c6ef74f245313910760dec62ea691cce8",
+      "bytes": 201
+    },
+    {
+      "path": "app/assets/icons/group.svg",
+      "sha256": "c67a14fd573fc2736814406d19ff6b151af720757c2a717763c1782ac7548539",
+      "bytes": 793
+    },
+    {
+      "path": "app/assets/icons/identifiers.png",
+      "sha256": "c76e9b5d8829991da8e54061cc8e96e23b91b9e2b7ea83836606c64f82dd6e89",
+      "bytes": 1473
+    },
+    {
+      "path": "app/assets/icons/identity_platform.svg",
+      "sha256": "3d62114289cd22666f572300860cfddf891deaa3890522a5206d92f2a2f21e9a",
+      "bytes": 578
+    },
+    {
+      "path": "app/assets/icons/interact.svg",
+      "sha256": "6614e0979d2d4a725551b6bb7c328eee89590b49ccb0eb5d60b43715f6ff7ad8",
+      "bytes": 571
+    },
+    {
+      "path": "app/assets/icons/last_page.svg",
+      "sha256": "9f5c7f8f59a440cdc30908dc3f9ec0302c970570c50d5df3fb02f99f914e84ef",
+      "bytes": 201
+    },
+    {
+      "path": "app/assets/icons/lock-hover.svg",
+      "sha256": "351ff160470475f790521da2be6e76ce78ba0acdb40d8b18635e883317226dee",
+      "bytes": 499
+    },
+    {
+      "path": "app/assets/icons/lock.svg",
+      "sha256": "937621ab007cd4de6233cdd1864e7fef0bbd3920630becf77af81996f75a44b1",
+      "bytes": 486
+    },
+    {
+      "path": "app/assets/icons/menu.svg",
+      "sha256": "f6affc4cf013605a8e42937f73dc224bac2cb1cc6550062bd3fa55e6c846de4c",
+      "bytes": 193
+    },
+    {
+      "path": "app/assets/icons/more_vert.svg",
+      "sha256": "3efb1fb1b4d0f08d4a4d7d4da43abb1bd2c50dc0b81edc9018cbced5232a4545",
+      "bytes": 427
+    },
+    {
+      "path": "app/assets/icons/notifications.svg",
+      "sha256": "b4a50118f6dc6373b1531175b42cd7ece41c76d9bee329ae5feef9a05b4038d8",
+      "bytes": 387
+    },
+    {
+      "path": "app/assets/icons/p2p.svg",
+      "sha256": "3bf4562fd80ba7d7cc53645136decfe5078e58f17a2133b3032ef0e7fc0dd1ba",
+      "bytes": 1199
+    },
+    {
+      "path": "app/assets/icons/remoteIds.png",
+      "sha256": "40097d09da9b2a94862e1b6641f286e2f3a0a1e7d849ccd6b48929c95ca0e64e",
+      "bytes": 2788
+    },
+    {
+      "path": "app/assets/icons/search.svg",
+      "sha256": "4189095027c1e071b5f4ea69602990b53179b58011ccd1a4b5c3177f2f42eefc",
+      "bytes": 376
+    },
+    {
+      "path": "app/assets/icons/settings-hover.svg",
+      "sha256": "0671518dde33e523920212cc68a68cc1d487bacad8203e108208a517250f1d35",
+      "bytes": 479
+    },
+    {
+      "path": "app/assets/icons/settings.png",
+      "sha256": "69d0e803712f50e99194ff864ae7bf1b5d0b96510e42c305ec51ae4b10f0420b",
+      "bytes": 3135
+    },
+    {
+      "path": "app/assets/icons/settings.svg",
+      "sha256": "4098395992e60a9160e44340993bc56cd4287f2d9eff6628f26feea3722f41d8",
+      "bytes": 479
+    },
+    {
+      "path": "app/assets/icons/vault-drawer-hover.svg",
+      "sha256": "30df57ca3bfa543490f37d64798351d1cb2a832751c4d8863fdee2eb4cf0bf93",
+      "bytes": 297
+    },
+    {
+      "path": "app/assets/icons/vault-drawer.svg",
+      "sha256": "70ec231921daaf80bbcc32361301d865824431d4151fea1c521a8195be6c5f17",
+      "bytes": 297
+    },
+    {
+      "path": "app/assets/icons/vault.png",
+      "sha256": "72d64596c5cdd1885680f80b621ce328cb96917b6b67e5c9244c4d18226358d8",
+      "bytes": 2896
+    },
+    {
+      "path": "app/assets/icons/watcher.svg",
+      "sha256": "31adf63eb02a90bb017672738c3328d59d80b8c1a61bb0e0867e905d23aa2a0b",
+      "bytes": 724
+    },
+    {
+      "path": "app/assets/icons/witness1.svg",
+      "sha256": "0880486e51dea846b2b4a4db951687eebfb08e187425e555831dfccc30d5261f",
+      "bytes": 445
+    },
+    {
+      "path": "app/features/identifiers/identifier-detail-page.js",
+      "sha256": "1fa45609096067e0918036f766460f19f49380c65a6e4f7f443092ee8f630a92",
+      "bytes": 5803
+    },
+    {
+      "path": "app/features/identifiers/identifiers-page.js",
+      "sha256": "b68472d977655d04754406062f2cc912b1690909f7130bfccbfb9a69436c9eaf",
+      "bytes": 5338
+    },
+    {
+      "path": "app/features/remotes/remote-detail-page.js",
+      "sha256": "50eedb49839fb5eb64fd1af84460c60934d2056880a400357f055268811ad510",
+      "bytes": 8711
+    },
+    {
+      "path": "app/features/remotes/remotes-page.js",
+      "sha256": "915360394ad80d4ea772f8f24e707a975eb9e9cdb13af7f204311df1ec19d63b",
+      "bytes": 9796
+    },
+    {
+      "path": "app/features/settings/settings-page.js",
+      "sha256": "b04008c6b8c58000077e12cc30f4a4726a629986eff05291075b18efa951a417",
+      "bytes": 7157
+    },
+    {
+      "path": "app/features/vaults/unlock-page.js",
+      "sha256": "173b6bd535f7add791dcb3dc530c5abe4ff60ed3d090b517eb18cfb4113edaae",
+      "bytes": 5817
+    },
+    {
+      "path": "app/features/vaults/vault-picker-page.js",
+      "sha256": "f8f1583b2b5b9553698c32fe330caf3cbadd9b64b3d7f4419e6df2d9e0dadb2a",
+      "bytes": 488
+    },
+    {
+      "path": "app/fixtures/data.js",
+      "sha256": "30336f6554dd3302de4da42163e6dbe9bed81273d2fe6c5a37a65ddcb41518c5",
+      "bytes": 5241
+    },
+    {
+      "path": "app/fixtures/fixture-index-page.js",
+      "sha256": "83370a18867f121913aa79bb3c44d2fe5b3656fa09192fd6b015118b670efbb4",
+      "bytes": 1667
+    },
+    {
+      "path": "app/fixtures/fixture-router.js",
+      "sha256": "32d04b05152e65e17d55949004250ba31bbaf149cf235e607eadbbe872c006f5",
+      "bytes": 7439
+    },
+    {
+      "path": "app/index.html",
+      "sha256": "25b98471aea7db1f1013eb741a6bc5d9ce501dfbd88a13e23f8449dd5b30d7f0",
+      "bytes": 670
+    },
+    {
+      "path": "app/providers/kerifoundation/config.js",
+      "sha256": "51e7e8d688f07ab08bdedd283474a0a04b2661e8220a948d0b5ad48ef5a1d2f6",
+      "bytes": 1928
+    },
+    {
+      "path": "app/providers/kerifoundation/identifiers-page.js",
+      "sha256": "c38cc97773cad26842c5884325b4ea080f227a216b9bfc3b98161f39a7d80ce0",
+      "bytes": 2832
+    },
+    {
+      "path": "app/providers/kerifoundation/watcher-overview-page.js",
+      "sha256": "533008777aa473c2e20e1f99db1de9b56986d374e70a598e082eb3358ddcdabe",
+      "bytes": 8478
+    },
+    {
+      "path": "app/providers/kerifoundation/witness-overview-page.js",
+      "sha256": "d4a3d3268040ac9f7ddeabfb5e83861d39851c158d5522b26332ce94f9efa088",
+      "bytes": 20067
+    },
+    {
+      "path": "app/runtime/bridge.js",
+      "sha256": "b9c62af7b469c254ac92914d5c9188127fa54134aacd19fd06fa3d055a495305",
+      "bytes": 15349
+    },
+    {
+      "path": "app/runtime/global-handlers.js",
+      "sha256": "81e4c2b61cfc744abf7b7053268940d1d967878707f7b82981eb0397983acba4",
+      "bytes": 1050
+    },
+    {
+      "path": "app/runtime/logger.js",
+      "sha256": "2c6f9343917cd3cd36ea87774a2c63467b5fd0b2f8a4ea907dc82aa6c507ecf4",
+      "bytes": 2514
+    },
+    {
+      "path": "app/runtime/messages.js",
+      "sha256": "2c8c55777dc106f77113a62dda54ffa656c27da43893dffc0a7e905c80cb68af",
+      "bytes": 1225
+    },
+    {
+      "path": "app/runtime/method-catalog.js",
+      "sha256": "c4287efd8fe880aed14d92ba1f87032a66adecfb5b118f05c36673ed55c595f6",
+      "bytes": 773
+    },
+    {
+      "path": "app/runtime/onboarding.py",
+      "sha256": "f01bc513f343b3af4b203af700338f68e904172db20dcb2b92291a1ffc5ffcd4",
+      "bytes": 48414
+    },
+    {
+      "path": "app/runtime/origin-contract.js",
+      "sha256": "79824ef260a632dc8e2cecbc91e79b0ef3b926281b3e8056ae669a51080cc191",
+      "bytes": 13873
+    },
+    {
+      "path": "app/runtime/transporting.py",
+      "sha256": "e5c2759b312396deb7abba10e0a8ea6db605626bbb36addef75b2b956495f21c",
+      "bytes": 21947
+    },
+    {
+      "path": "app/runtime/vaulting.py",
+      "sha256": "ff5282880f67a307ca46eda9715cc52c470d4f01ff5e1da112bb5fb3ed7aaae0",
+      "bytes": 29957
+    },
+    {
+      "path": "app/runtime/wallet-worker.py",
+      "sha256": "fbb13ba1b5cd7e00dc3cb9b95c377d25451a7f843083a39472f361958cf9cb04",
+      "bytes": 91362
+    },
+    {
+      "path": "app/shared/components.js",
+      "sha256": "da40830b2af6654e76d7da3a1a8ec18f8e29e73358bc129195eb71fa3988cbc4",
+      "bytes": 26050
+    },
+    {
+      "path": "app/shared/dom.js",
+      "sha256": "69c2d78b034e62e5fa746261626e088f76908dfa95b8edaf81c15774f4cd5862",
+      "bytes": 849
+    },
+    {
+      "path": "app/styles/base.css",
+      "sha256": "c6bc77297fe3f25e17243b9f0c8af0055191f472c4cbc6b25802d8bc41fe81e4",
+      "bytes": 1618
+    },
+    {
+      "path": "app/styles/components.css",
+      "sha256": "43dec707a844ac4d84a89221c99858944a5f9aef2f08d13bd1aec791a4330e45",
+      "bytes": 47247
+    },
+    {
+      "path": "app/styles/layout.css",
+      "sha256": "ffe950324235180164441acc0040d64dfb5669aa20a4c0cf23296b8894b7a62f",
+      "bytes": 10227
+    },
+    {
+      "path": "app/styles/tokens.css",
+      "sha256": "42ea82b36a5dc6810ebc119682857bd765dc394df776b99d29c89fa1c5dc745f",
+      "bytes": 11737
+    },
+    {
+      "path": "app/ui/composites/empty-state.js",
+      "sha256": "9adb7979fec517f0da98051fe5813685aec28b9fca14e11c15755009f2107550",
+      "bytes": 895
+    },
+    {
+      "path": "app/ui/composites/modal.js",
+      "sha256": "838f1e5e6e4208249dcce00c92913180db719f8c16f19cf66d254f56a4936fa4",
+      "bytes": 2751
+    },
+    {
+      "path": "app/ui/composites/sheet.js",
+      "sha256": "57bf52e7708b3c0a772d60ebbc77224dcaecfefeae2fc4fa914b7b6121ae273e",
+      "bytes": 2886
+    },
+    {
+      "path": "app/ui/composites/skeleton.js",
+      "sha256": "3dbe906783e37dabad2e81f527111a4c319894ea14e1a951326b467090e5af72",
+      "bytes": 2323
+    },
+    {
+      "path": "app/ui/composites/stepper.js",
+      "sha256": "3a322179499216dae6de3c45681ba37a531fd3ad7cabd481a911b47fcaae1eec",
+      "bytes": 1283
+    },
+    {
+      "path": "app/ui/composites/toast.js",
+      "sha256": "9e393ba846203cf4030045f85f9ae3579ad0538862cb8ba91351031132e0b49d",
+      "bytes": 1755
+    },
+    {
+      "path": "app/ui/core/a11y.js",
+      "sha256": "a2118dd16f4b42dfe3270bec5d9d01bfba16c41625703d27af4f7a1189f98b34",
+      "bytes": 3570
+    },
+    {
+      "path": "app/ui/core/events.js",
+      "sha256": "ade5862c9672a345b7ccfc3f6e620022baef2d08016155475ff9fb5a956cbe7b",
+      "bytes": 946
+    },
+    {
+      "path": "app/ui/core/mount.js",
+      "sha256": "0de84737aae9c03ca37ede8e47bb7138abcdbb5ea9f0f2aeaa933be4c9d6b6ba",
+      "bytes": 1026
+    },
+    {
+      "path": "app/ui/core/view.js",
+      "sha256": "0b3826703002a63af9a3a470ccb15988b4cdb948de444f891e302ee4cded07f5",
+      "bytes": 1385
+    },
+    {
+      "path": "app/ui/primitives/badge.js",
+      "sha256": "1f305d7e81c1ca46a33ed8e86d1fe0a4bb2efa1723c8e892f2639b135505df8d",
+      "bytes": 303
+    },
+    {
+      "path": "app/ui/primitives/button.js",
+      "sha256": "4e4e7f5a76b27a80f3e27723b243589a0550fcca763bc7edc453d0e893b52cf0",
+      "bytes": 629
+    },
+    {
+      "path": "app/ui/primitives/card.js",
+      "sha256": "39d83a66f92bf6f6d0f7506f9ce3f4e1fb882230e7cd292b45ca951a29adf363",
+      "bytes": 1009
+    },
+    {
+      "path": "app/ui/primitives/chip.js",
+      "sha256": "d357cfe9c753876047c1256aa134b08842f7eb52a967a6f1a8c50b78b5b68652",
+      "bytes": 644
+    },
+    {
+      "path": "app/ui/primitives/field-text.js",
+      "sha256": "4b80f72e9b1841087c93c7b81862a07a6308a8b6bb84e313e0c30b4b67625ad2",
+      "bytes": 1420
+    },
+    {
+      "path": "app/ui/primitives/icon-button.js",
+      "sha256": "0851b325e333838195ee4703a79f70320a98e14be916140da8d6a1cd8046c612",
+      "bytes": 697
+    },
+    {
+      "path": "contracts/runtime-requirements.json",
+      "sha256": "feaecfff81e689d33d686a173221189df930b543cf03bb59f1647953a4cfa331",
+      "bytes": 1907
+    },
+    {
+      "path": "pyscript-ci.toml",
+      "sha256": "14afb157bb3895ad0fb857c30de187204c8a4d905b391214b885caecf0f648bb",
+      "bytes": 210
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/attrs-25.2.0-py3-none-any.whl",
+      "sha256": "0ca0ca2b0dbc02f198a7134fb09c26598dc50390439b318d6dfb63adaee97b25",
+      "bytes": 64016
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/cffi-1.17.1-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "a91747e5e4d982e7e7b2f158f2d06302c4205198ccec688e34b9c310e4417da7",
+      "bytes": 152401
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/cryptography-46.0.3-cp313-abi3-pyodide_2025_0_wasm32.whl",
+      "sha256": "8dcec3549f85ea9df0941f75339fa5539d3b4a87ea0a47ab1957fd30c3878419",
+      "bytes": 1030571
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/jsonschema_specifications-2024.10.1-py3-none-any.whl",
+      "sha256": "40a4885255fc56c2fb671eb656a3be0501b1185a59aad6e67dde3cee0d2d916d",
+      "bytes": 17487
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/jsonschema-4.23.0-py3-none-any.whl",
+      "sha256": "5178a630760e05b5ce4392fb885e0bdd24a9bc5939006b5a88a0a63d402f0b60",
+      "bytes": 54538
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/libopenssl-1.1.1w.zip",
+      "sha256": "eaec7126f466a33ea4121fd230211bb01e9ad1c5748f3cd0b4b1c8677b4ac90a",
+      "bytes": 796818
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/micropip-0.11.0-py3-none-any.whl",
+      "sha256": "0ae422514e45d068b8159eb8ec3b2c3f4cbce2e664e26cb81735dbe4af2377a1",
+      "bytes": 115409
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/multidict-6.7.0-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "c7db3ee26fddee527406fef580d21aadb79adde44b61bc14ddac4977d31ea393",
+      "bytes": 31662
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/packaging-24.2-py3-none-any.whl",
+      "sha256": "c18cde5592cc3d1823e9cc3a9a4fb436b02c15e3f8d7f5f69962f77b1b109da1",
+      "bytes": 71930
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/pycparser-2.22-py3-none-any.whl",
+      "sha256": "778a41679914eee8499ce3d37a8d15d808d8972e70aa02eef13ac59649559aaa",
+      "bytes": 117552
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/pyodide-lock.json",
+      "sha256": "3256ffc76388de0e37f4b34d42ab484268d1afc675179ff97b2a5bb14f84ccac",
+      "bytes": 120010
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/pyodide.asm.js",
+      "sha256": "1263f02b5b26099b96112378156f242dd98b39a8201ba7765e5fe3d455c5ce91",
+      "bytes": 1074322
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/pyodide.asm.wasm",
+      "sha256": "e2f4ee75b325e35eb31bfb8c613d4dd5098f5502c156a97847686875b5025480",
+      "bytes": 8647684
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/pyodide.mjs",
+      "sha256": "23213d27e9dacbda6f25f955fb38dabfc40ada082c04ee253047ea5dddcaa3b5",
+      "bytes": 17616
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/pyparsing-3.2.1-py3-none-any.whl",
+      "sha256": "8f314b856e7e87cb3a426ce4db341308199157f6a757256e215e4d418e216d86",
+      "bytes": 107717
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/pyrsistent-0.20.0-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "ea59641657ac5f69b04484e646eecdf3d09e4759163e2cdee876e18ae711ed4c",
+      "bytes": 58220
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/python_stdlib.zip",
+      "sha256": "4298b6ee445cb724c3973437da47789752b9e6ff4e26619026b283ec801fc46b",
+      "bytes": 2423989
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/pyyaml-6.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "d0b3d100f3ebe90c0ea62f04d9ac2d3c38ca0023be5d240ef92c77b94c9495f8",
+      "bytes": 117402
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/README.md",
+      "sha256": "ed49f9bb4ecca28e06679e1317393804d468fb869702ecbf7ceae32a8601fc15",
+      "bytes": 1265
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/referencing-0.36.2-py3-none-any.whl",
+      "sha256": "9fd72557776e4d4e1eb6f0d906c41c0dd71a8e6bce8d791e93a1ea6aba0602fc",
+      "bytes": 16916
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/rpds_py-0.30.0-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "8e7918c617cc077fcb0d110f9d9d6511466958f9c095810be1f72760a63bfc2f",
+      "bytes": 133833
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/setuptools-76.0.0-py3-none-any.whl",
+      "sha256": "0ffe3d7fd6b219b68fd0c67a450a44e3a19e2d2d9e751e4333430af27c6d89e5",
+      "bytes": 953457
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/six-1.17.0-py2.py3-none-any.whl",
+      "sha256": "1f715fc699e802b31e53290ead6c16a4d6a8da462a225d2e06097fce45ab70b9",
+      "bytes": 11050
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/sortedcontainers-2.4.0-py2.py3-none-any.whl",
+      "sha256": "8f9018394f1e1c1c98c8744b94d224c990f5090747e2a4c42ac2ca13ae9435ac",
+      "bytes": 29575
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/typing_extensions-4.15.0-py3-none-any.whl",
+      "sha256": "b57583f623dd3df72e6ace8a4061c3e4f0683755165ef73b4cd44ac3df92ddb9",
+      "bytes": 44613
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wcwidth-0.2.13-py2.py3-none-any.whl",
+      "sha256": "5aea2ced9398448b2807b68a484586aeb5c91cac95a634acf39e2300ad9847c8",
+      "bytes": 34166
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/apispec-6.9.0-py3-none-any.whl",
+      "sha256": "4c275f0a6dac0bcfcceee00b451a16b650f9184a57c624b0b6d12d82b8d15a61",
+      "bytes": 30640
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/cbor2-5.8.0-py3-none-any.whl",
+      "sha256": "3727d80f539567b03a7aa11890e57798c67092c38df9e6c23abb059e0f65069c",
+      "bytes": 24374
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/hjson-3.1.0-py3-none-any.whl",
+      "sha256": "65713cdcf13214fb554eb8b4ef803419733f4f5e551047c9b711098ab7186b89",
+      "bytes": 54018
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/http_sfv-0.9.9-py3-none-any.whl",
+      "sha256": "5feed51c90e9a1dc797701662d044d936923cf0027255c75452b8240e33d6c82",
+      "bytes": 16846
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/jsonschema_specifications-2024.10.1-py3-none-any.whl",
+      "sha256": "291b876e89e29cdbaf13531783cde3b620b3f5229a0b653608ed485b3838c3ec",
+      "bytes": 17487
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/mnemonic-0.21-py3-none-any.whl",
+      "sha256": "72dc9de16ec5ef47287237b9b6943da11647a03fe7cf1f139fc3d7c4a7439288",
+      "bytes": 92701
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/multicommand-1.0.0-py3-none-any.whl",
+      "sha256": "28d3997b93a3dced6bd660719aca664b6d25dac3c27c15bfbb87fa0a7c678244",
+      "bytes": 5761
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/ordered_set-4.1.0-py3-none-any.whl",
+      "sha256": "046e1132c71fcf3330438a539928932caf51ddbc582496833e23de611de14562",
+      "bytes": 7634
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/prettytable-3.17.0-py3-none-any.whl",
+      "sha256": "aad69b294ddbe3e1f95ef8886a060ed1666a0b83018bbf56295f6f226c43d287",
+      "bytes": 34433
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyasn1_alt_modules-0.4.7-py3-none-any.whl",
+      "sha256": "5afbe1bbb50d003af945acbfcfb9de130c9b44966e432ba3ec0cb81dd6dda20f",
+      "bytes": 264649
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyasn1-0.6.2-py3-none-any.whl",
+      "sha256": "1eb26d860996a18e9b6ed05e7aae0e9fc21619fcee6af91cca9bad4fbea224bf",
+      "bytes": 83371
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_attrs.whl",
+      "sha256": "1675652c1733d1199c2ff65efd41c526c8697bbb66518e50d689d15e95525648",
+      "bytes": 64016
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_cffi.whl",
+      "sha256": "ad166ed3d2407d019362b1a2380cfc8ab0869908578dd20b12ce822f021ebac2",
+      "bytes": 152401
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_cryptography.whl",
+      "sha256": "c3e558a314f8eb10f76bb02a2973a4c0f97dae42aae74f7230e82d99d55cb3cf",
+      "bytes": 1033641
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_jsonschema_specifications.whl",
+      "sha256": "291b876e89e29cdbaf13531783cde3b620b3f5229a0b653608ed485b3838c3ec",
+      "bytes": 17487
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_jsonschema.whl",
+      "sha256": "0a919bbd8bce63cfe70f37b4604a8069ef909cecc1823429a229273ce15ffdfa",
+      "bytes": 54538
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_libopenssl.zip",
+      "sha256": "8d073841eb93488e79f0f1f354cbe03dad17d6705e75249b07516040869a5ad1",
+      "bytes": 796817
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_micropip.whl",
+      "sha256": "d98e6100df5e4145c1b11d559a8620e92b98d994cc1b52381a8815cebf3e7128",
+      "bytes": 115409
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_multidict.whl",
+      "sha256": "7a6ab6887e68bdd079a67427f944d90f7d8b09c525b95b069d9c9385a3d60762",
+      "bytes": 31659
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_pycparser.whl",
+      "sha256": "3322a697f8cc9539be8236eff37cdb1040e96eb9684a3610ba69c99c370c1e8c",
+      "bytes": 117552
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_pyparsing.whl",
+      "sha256": "760726dfa41767e3d5e30e5addd7875251f430cd715b312e526cbbd1d794c599",
+      "bytes": 107717
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_pyrsistent.whl",
+      "sha256": "708f7d935875db499fcc92613b0ae7497caba969ec85ea7b8e8fd565dc216bbb",
+      "bytes": 58220
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_pyyaml.whl",
+      "sha256": "68a0229fd6f7b5209def235f531b941479ab71fbe25a635dbf6e27389ad1f67e",
+      "bytes": 119589
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_referencing.whl",
+      "sha256": "14c785e3f7b990636b470da343136135fb0d34919174147aac8bce25d6bcc81a",
+      "bytes": 16916
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_rpds_py.whl",
+      "sha256": "f1faba153f4ec9e53e2c5e24c90b8ef1e84f878d6b11b5ea9c078e3c8bf992fa",
+      "bytes": 130024
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_setuptools.whl",
+      "sha256": "4bf17f87160d7d2b3ffa7e414c2e01abf1b60570410a1c1dc15277a463bb6402",
+      "bytes": 953457
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_six.whl",
+      "sha256": "32a97ce76f718db29b29511588192894a1bcec5811b2a8d3a49c37c497505740",
+      "bytes": 11050
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pyodide_typing_extensions.whl",
+      "sha256": "c34be3c98cf4c526f4418c115aea80e14851b20f2529facf4436b09463e0a29e",
+      "bytes": 44613
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/pypng-0.20220715.0-py3-none-any.whl",
+      "sha256": "4a43e969b8f5aaafb2a415536c1a8ec7e341cd6a3f957fd5b5f32a4cfeed902c",
+      "bytes": 58057
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/qrcode-7.4.2-py3-none-any.whl",
+      "sha256": "581dca7a029bcb2deef5d01068e39093e80ef00b4a61098a2182eac59d01643a",
+      "bytes": 46197
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/semver-3.0.4-py3-none-any.whl",
+      "sha256": "9c824d87ba7f7ab4a1890799cec8596f15c1241cb473404ea1cb0c55e4b04746",
+      "bytes": 17912
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/sortedcontainers-2.4.0-py2.py3-none-any.whl",
+      "sha256": "a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0",
+      "bytes": 29575
+    },
+    {
+      "path": "vendor/pyodide/0.29.3/wheels/wheel-0.45.1-py3-none-any.whl",
+      "sha256": "708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248",
+      "bytes": 72494
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/codemirror_commands-DchRTNgd.js",
+      "sha256": "892e57394a33c226fd8b43eb0ad242cf6de8aeb382c1361d8ff037fa54555190",
+      "bytes": 28713
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/codemirror_lang-python-DNPefh30.js",
+      "sha256": "7114748cede195a0c3e97bd11f702ae8c4d369f8bdd2e936208fa4bf37327ca0",
+      "bytes": 70649
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/codemirror_language-LMrWnq8A.js",
+      "sha256": "f50bc78db74ae0286fd256d7dacf058739b67ca8d724e9bea52dc3baea513b8a",
+      "bytes": 65566
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/codemirror_state-BIAL8JKm.js",
+      "sha256": "67499b1e8d5283cc5a1665ee7ee497f6f3d8232eaa8e07f827de0c68c5de1d91",
+      "bytes": 48683
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/codemirror_view-BqWXTi4q.js",
+      "sha256": "18f59affd099c1a8214a7c9c7e55141b7d1c3c70786e306048bfe3005ff478b2",
+      "bytes": 197627
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/codemirror-CKi3_HKM.js",
+      "sha256": "52e804109da8c3093f818d2674cff9c8d4602fe66189a3dfe61bae5418140ab4",
+      "bytes": 32292
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/core-DSF9czGY.js",
+      "sha256": "29d0aa103b85b8f17fb3ccaf5b1a2788bdb851378655ff9f39dd1c50270b171d",
+      "bytes": 168945
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/core.css",
+      "sha256": "fc1fa84ac520ce8a6a05120f2613aa20c2ad5a3189b56612b0d15d82d5af75dc",
+      "bytes": 874
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/core.d.ts",
+      "sha256": "c859c3ab6cb50505b14148b7a6bd8d7a93c2883516470985174480f041082d28",
+      "bytes": 543
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/core.js",
+      "sha256": "14360084a89eb3588d1b95fe7873736d6c8a693486106d57cceb5080226f7ea0",
+      "bytes": 227
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/deprecations-manager-CWR-4gkk.js",
+      "sha256": "aefbce4ff95a5e6de47bfb674f18408649fd7eebdf340dd7cc7ec1813b18ff65",
+      "bytes": 374
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/donkey-CLRFs9eP.js",
+      "sha256": "e6ea57fa138a19c3ccd010e40652d0f1b32d4b1b589f5a6e12b107b4689f6350",
+      "bytes": 2355
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/error-C4rw5PRJ.js",
+      "sha256": "04838df0c055dc1c7db75415d65fad75c06e7b69d80b2b761ecbb71872cd0aa5",
+      "bytes": 691
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/index-B91jjR7S.js",
+      "sha256": "0c3a09b6b15c8639d1a40aafa14f1a22e28ba9396298b33da557b041b4e8f30f",
+      "bytes": 34944
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/mpy-8FN05ieu.js",
+      "sha256": "2b24df4680c4e97030fbff0d78e19230884df697b1414f60fb35d45c9b4b8abb",
+      "bytes": 2785
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/py-C-7lSARg.js",
+      "sha256": "d8771e2af1f00adfdd054830e37798da419decafcc0e16d5281fb0c253b39eec",
+      "bytes": 2453
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/py-editor-OL7aHQ2M.js",
+      "sha256": "0e19341d69da651a26259eb152111e758a2f0fd5d0079d6bdcabc8fa9d7911d5",
+      "bytes": 6619
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/py-game-CiQ00KCW.js",
+      "sha256": "08da220fb660df74efa526d2cf68a0a582a0d364a39ded680abb5e64f8872403",
+      "bytes": 1582
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/py-terminal-uGw2zWRK.js",
+      "sha256": "f5a10500bc422de0415aa8b0b578b0204208b1cf3ac22cd8d49661a2f2a15bd7",
+      "bytes": 706
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/README.md",
+      "sha256": "cf062ad71f7296b6c13b4e8ab7538a3f545b98731a3b237b68c8c5a5a1929299",
+      "bytes": 1055
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/toml-BK2RWy-G.d.ts",
+      "sha256": "b7c62af963b10b0dab741ec886877692e2f94284afc245bdd16c64ee8b31425a",
+      "bytes": 46
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/toml-BK2RWy-G.js",
+      "sha256": "629fd49c874500e6643214f9163df80968d0d213c5b6df6fd35fed6865ff0170",
+      "bytes": 945
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/toml-Blg7Izee.js",
+      "sha256": "0f36a59c12553e7850267970fb8f23dcd1255feec5b2723cd67df809b88d4c96",
+      "bytes": 21451
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/xterm_addon-fit--gyF3PcZ.js",
+      "sha256": "002266de67608b425bc2fcdcadab8ba907bea97e8a2e80a6bf6757e4eafd34ed",
+      "bytes": 1334
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/xterm_addon-web-links-D95xh2la.js",
+      "sha256": "3d11b9fece6cef03ae3c4f97873a54e9c8cc06c4e906a2af42c553f97712b47f",
+      "bytes": 2949
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/xterm-DrSYbXEP.js",
+      "sha256": "53ed1ef82ae94f2d4054fc07be1ab4a9b4528a187cab63a16a637aa9237fd636",
+      "bytes": 290550
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/xterm-readline-CK_45Ygx.js",
+      "sha256": "4da94efb53a931d4aba3a86cf7555365e481a824755dad4c0789b261ad3dca21",
+      "bytes": 20910
+    },
+    {
+      "path": "vendor/pyscript/2025.11.2/zip-DhoBRP3d.js",
+      "sha256": "c3010f31a58eff4b0b0a22c96bd8d81aba659ba280342b12d1465074752501d7",
+      "bytes": 158935
+    },
+    {
+      "path": "wheels/blake3-1.0.8-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "6e9bd0d07520964bde44434a711140edf43287be314668a841ea4ff67acbb285",
+      "bytes": 93689
+    },
+    {
+      "path": "wheels/hio_web-0.7.20-py3-none-any.whl",
+      "sha256": "887858698d2f18f4029ec20fb03d7b6dd2f62ac3a6757cc607b37762dd95d2cd",
+      "bytes": 224297
+    },
+    {
+      "path": "wheels/keri_web-2.0.0.dev6-py3-none-any.whl",
+      "sha256": "5930c5b90174a7ae2ec070d39bca191f1354583ab148889e8bd248ef79a27812",
+      "bytes": 709829
+    },
+    {
+      "path": "wheels/msgpack-1.1.2-py3-none-any.whl",
+      "sha256": "d0e1b37ab4f3f4abb33363b3d3d8b3e7ddd78b6667aea057fc6a57ee738fd9de",
+      "bytes": 11102
+    },
+    {
+      "path": "wheels/pychloride-0.7.18.2-py3-none-any.whl",
+      "sha256": "8e000bd17f64ef6aec74eafa6ed9ed921416a3116d32c9ac1a4351c89648767c",
+      "bytes": 101422
+    }
+  ],
+  "contracts": {
+    "runtime_requirements": {
+      "path": "contracts/runtime-requirements.json"
+    }
+  }
+}

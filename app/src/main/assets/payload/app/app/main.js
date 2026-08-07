@@ -80,6 +80,7 @@ const session = createSessionStore({
     remoteFilter: "all",
 });
 let drawer = null;
+let drawerReady = false;
 let actions;
 function currentState() {
     return assumeType(session.snapshot());
@@ -324,12 +325,13 @@ actions = {
             drawer.close();
         }
         else {
+            try {
+                await actions.refreshVaults(currentState().unlockedVaultId, currentState().vaultSummary);
+            }
+            catch {
+                // Bridge unavailable (e.g. no Pyodide worker): open drawer with stale vault list
+            }
             drawer.open();
-            void actions.refreshVaults(currentState().unlockedVaultId, currentState().vaultSummary).catch(() => {
-                // refreshVaults failure is surfaced through the bridge error
-                // path; this catch prevents an unhandled rejection when the
-                // drawer is opened before the worker is ready.
-            });
         }
     },
 };
@@ -343,7 +345,7 @@ async function render() {
         renderShell(root, {
             route: indexRoute,
             page: renderFixtureIndexPage(),
-            state: currentState(),
+            state: { ...currentState(), drawerReady },
             vault: null,
             actions,
         });
@@ -355,14 +357,14 @@ async function render() {
             renderShell(root, {
                 route: fixture.route,
                 page: fixture.page,
-                state: currentState(),
+                state: { ...currentState(), drawerReady },
                 vault: assumeType(fixture.vault),
                 actions,
             });
         }
         else {
             const fallbackRoute = { name: "not-found", shellMode: "home", navMode: "none", path, params: {} };
-            renderNotFoundRoute({ root, route: fallbackRoute, state: currentState(), vault: null, actions });
+            renderNotFoundRoute({ root, route: fallbackRoute, state: { ...currentState(), drawerReady }, vault: null, actions });
         }
         return;
     }
@@ -408,7 +410,7 @@ async function render() {
         renderShell(root, {
             route,
             page: result.page,
-            state: currentState(),
+            state: { ...currentState(), drawerReady },
             vault: assumeType(result.vault),
             actions,
         });
@@ -426,7 +428,7 @@ async function render() {
         });
         const code = errorCode(error);
         if (code === "NOT_FOUND") {
-            renderNotFoundRoute({ root, route, state: currentState(), vault: assumeType(vault), actions });
+            renderNotFoundRoute({ root, route, state: { ...currentState(), drawerReady }, vault: assumeType(vault), actions });
             return;
         }
         if ((code === "LOCKED" || code === "TIMEOUT") && route.params.vaultId) {
@@ -445,7 +447,7 @@ async function render() {
         renderShell(root, {
             route: route.shellMode ? route : { ...route, shellMode: "home" },
             page: renderErrorPage(assumeType(error)),
-            state: currentState(),
+            state: { ...currentState(), drawerReady },
             vault: assumeType(vault),
             actions,
         });
@@ -461,11 +463,9 @@ window.addEventListener("beforeunload", () => {
 });
 async function bootstrap() {
     installGlobalHandlers();
-    initDrawer([]);
     await render();
     try {
         await actions.refreshVaults();
-        await render();
     }
     catch (error) {
         postLog("initial_vault_refresh_failed", {
@@ -474,5 +474,8 @@ async function bootstrap() {
             message: errorMessage(error),
         });
     }
+    initDrawer(currentState().vaults);
+    drawerReady = true;
+    await render();
 }
 void bootstrap();

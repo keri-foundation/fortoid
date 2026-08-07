@@ -14,7 +14,6 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const PAYLOAD_DIR = path.join(REPO_ROOT, 'app/src/main/assets/payload');
 
 const REQUIRED_FILES = [
-  'index.html',
   'manifest.json',
   'checksums.sha256',
   'app/index.html',

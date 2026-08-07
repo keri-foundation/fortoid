@@ -3,17 +3,21 @@
 /**
  * Byte-preserving FortWeb runtime package importer for Android.
  *
- * Accepts one FortWeb runtime ZIP, validates archive structure and integrity,
- * and stages the verified package under app/src/main/assets/payload/ without
- * modifying any imported byte.
+ * Accepts one FortWeb runtime ZIP (produced by FortWeb's tools/package-runtime.mjs),
+ * validates archive structure and integrity against the producer manifest, and
+ * transactionally activates the verified package under app/src/main/assets/payload/.
+ *
+ * The importer never modifies a single producer byte. The producer manifest
+ * (`manifest.json`) and checksum file (`checksums.sha256`) are the authoritative
+ * inventory.
  *
  * Usage:
  *   node tools/import-fortweb-runtime-package.mjs <runtime-package.zip>
  */
 
 import { createHash } from 'node:crypto';
-import { execSync } from 'node:child_process';
-import { mkdir, readFile, readdir, rm, writeFile, lstat } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { cp, mkdir, readFile, readdir, rm, rename, lstat } from 'node:fs/promises';
 import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,15 +29,17 @@ const PAYLOAD_DEST = path.join(REPO_ROOT, 'app/src/main/assets/payload');
 const EXPECTED_PACKAGE_NAME = 'fortweb-runtime';
 const EXPECTED_PRODUCER = 'fortweb';
 const EXPECTED_PROFILE = 'offline-runtime';
-const ENTRY_DOCUMENT = 'app/index.html';
+const EXPECTED_RR_PATH = 'contracts/runtime-requirements.json';
 const MANIFEST_FILENAME = 'manifest.json';
 const CHECKSUM_FILENAME = 'checksums.sha256';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Error type ───────────────────────────────────────────────────────────────
 
-function sha256Buffer(buf) {
-  return createHash('sha256').update(buf).digest('hex');
+class ImportError extends Error {
+  constructor(msg) { super(msg); this.name = 'ImportError'; }
 }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function sha256File(filePath) {
   return new Promise((resolve, reject) => {
@@ -46,350 +52,297 @@ function sha256File(filePath) {
 }
 
 function isSafeRelative(p) {
+  if (p === '') return false;
   if (path.isAbsolute(p)) return false;
   if (p.includes('\\')) return false;
   const normalized = path.normalize(p);
   if (normalized !== p) return false;
   if (normalized.startsWith('..')) return false;
-  const segments = normalized.split(path.sep);
-  return !segments.includes('..');
+  return !normalized.split(path.sep).includes('..');
 }
 
-function panic(msg) {
-  console.error(`[import-fortweb-runtime-package] ${msg}`);
-  process.exit(1);
-}
-
-// ── Unzip using system unzip ─────────────────────────────────────────────────
-
-function unzip(zipPath, destDir) {
-  const absZip = path.resolve(zipPath);
-  const absDest = path.resolve(destDir);
-  try {
-    execSync(`unzip -q -o "${absZip}" -d "${absDest}"`, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 30000,
-    });
-  } catch (e) {
-    panic(`unzip failed for ${zipPath}: ${e.stderr?.toString() || e.message}`);
-  }
-}
+// ── ZIP operations (argument-safe, no shell interpolation) ──────────────────
 
 function unzipList(zipPath) {
-  const absZip = path.resolve(zipPath);
   try {
-    const out = execSync(`unzip -Z -1 "${absZip}"`, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 10000,
+    const out = execFileSync('unzip', ['-Z', '-1', zipPath], {
+      encoding: 'utf-8', timeout: 10000, maxBuffer: 10 * 1024 * 1024,
     });
-    return out.toString().trim().split('\n').filter(Boolean);
+    return out.trim().split('\n').filter(Boolean);
   } catch (e) {
-    panic(`unzip list failed for ${zipPath}: ${e.stderr?.toString() || e.message}`);
+    throw new ImportError(`unzip list failed: ${e.stderr || e.message}`);
   }
 }
 
-// ── Validation ───────────────────────────────────────────────────────────────
-
-async function validateEntryList(entries, packageRoot) {
-  const errors = [];
-
-  // Check for unsafe entries
-  for (const entry of entries) {
-    if (!isSafeRelative(entry)) {
-      errors.push(`unsafe path: ${entry}`);
-      continue;
-    }
-    if (entry.endsWith('/')) {
-      errors.push(`directory entry (not a file): ${entry}`);
-    }
+function unzipExtract(zipPath, destDir) {
+  try {
+    execFileSync('unzip', ['-q', '-o', zipPath, '-d', destDir], {
+      timeout: 30000, maxBuffer: 10 * 1024 * 1024,
+    });
+  } catch (e) {
+    throw new ImportError(`unzip extract failed: ${e.stderr || e.message}`);
   }
+}
 
-  // Check for duplicates
+// ── Entry safety ────────────────────────────────────────────────────────────
+
+export function validateEntries(entries) {
+  const errors = [];
   const seen = new Set();
-  for (const entry of entries) {
-    if (seen.has(entry)) {
-      errors.push(`duplicate entry: ${entry}`);
-    }
-    seen.add(entry);
-  }
-
-  return errors;
-}
-
-async function validateManifest(manifestPath, packageName) {
-  const errors = [];
-  let manifest;
-
-  try {
-    const raw = await readFile(manifestPath, 'utf-8');
-    manifest = JSON.parse(raw);
-  } catch (e) {
-    return [`manifest.json invalid: ${e.message}`];
-  }
-
-  if (!manifest.package_name) {
-    errors.push('manifest.json: missing package_name');
-  } else if (manifest.package_name !== EXPECTED_PACKAGE_NAME) {
-    errors.push(`manifest.json: expected package_name "${EXPECTED_PACKAGE_NAME}", got "${manifest.package_name}"`);
-  }
-
-  if (!manifest.producer) {
-    errors.push('manifest.json: missing producer');
-  } else if (manifest.producer !== EXPECTED_PRODUCER) {
-    errors.push(`manifest.json: expected producer "${EXPECTED_PRODUCER}", got "${manifest.producer}"`);
-  }
-
-  if (!manifest.payload_profile) {
-    errors.push('manifest.json: missing payload_profile');
-  } else if (manifest.payload_profile !== EXPECTED_PROFILE) {
-    errors.push(`manifest.json: expected payload_profile "${EXPECTED_PROFILE}", got "${manifest.payload_profile}"`);
-  }
-
-  if (!manifest.schema_version) {
-    errors.push('manifest.json: missing schema_version');
-  }
-
-  if (!manifest.entrypoint) {
-    errors.push('manifest.json: missing entrypoint');
-  }
-
-  if (!manifest.files || typeof manifest.files !== 'object') {
-    errors.push('manifest.json: missing or invalid files map');
-  }
-
-  // Verify typed contracts descriptor
-  if (!manifest.contracts || typeof manifest.contracts !== 'object') {
-    errors.push('manifest.json: missing contracts descriptor');
-  } else if (!manifest.contracts.runtime_requirements || !manifest.contracts.runtime_requirements.path) {
-    errors.push('manifest.json: missing contracts.runtime_requirements.path');
-  }
-
-  return errors;
-}
-
-async function validateChecksums(checksumsPath, extractedDir, manifest) {
-  const errors = [];
-  let checksumsRaw;
-
-  try {
-    checksumsRaw = await readFile(checksumsPath, 'utf-8');
-  } catch (e) {
-    return [`checksums.sha256 missing or unreadable: ${e.message}`];
-  }
-
-  const expected = new Map();
-  for (const line of checksumsRaw.trim().split('\n')) {
-    const trimmed = line.trim();
+  for (const raw of entries) {
+    const trimmed = raw.endsWith('/') ? raw.slice(0, -1) : raw;
     if (!trimmed) continue;
-    const parts = trimmed.split(/\s+/, 2);
-    if (parts.length !== 2) {
-      errors.push(`checksums.sha256: malformed line: ${trimmed}`);
-      continue;
-    }
-    expected.set(parts[1], parts[0]);
+    if (!isSafeRelative(trimmed)) { errors.push(`unsafe path: ${raw}`); continue; }
+    if (seen.has(trimmed)) { errors.push(`duplicate entry: ${trimmed}`); }
+    seen.add(trimmed);
   }
-
-  // Verify every file in the manifest is in checksums and matches
-  if (manifest?.files) {
-    for (const [relPath, fileInfo] of Object.entries(manifest.files)) {
-      const expectedDigest = expected.get(relPath);
-      if (!expectedDigest) {
-        errors.push(`checksums.sha256: missing entry for manifest file: ${relPath}`);
-        continue;
-      }
-
-      const filePath = path.join(extractedDir, relPath);
-      if (!existsSync(filePath)) {
-        errors.push(`checksums.sha256: file not found in extracted archive: ${relPath}`);
-        continue;
-      }
-
-      try {
-        const actualDigest = await sha256File(filePath);
-        if (actualDigest !== expectedDigest) {
-          errors.push(`checksums.sha256: digest mismatch for ${relPath}: expected ${expectedDigest}, got ${actualDigest}`);
-        }
-      } catch (e) {
-        errors.push(`checksums.sha256: cannot hash ${relPath}: ${e.message}`);
-      }
-
-      // Byte count check
-      try {
-        const stats = await lstat(filePath);
-        if (fileInfo.bytes !== undefined && stats.size !== fileInfo.bytes) {
-          errors.push(`byte count mismatch for ${relPath}: manifest=${fileInfo.bytes}, actual=${stats.size}`);
-        }
-      } catch (e) {
-        errors.push(`byte count: cannot stat ${relPath}: ${e.message}`);
-      }
-    }
-  }
-
-  // Check for unexpected files
-  const manifestFiles = new Set(manifest?.files ? Object.keys(manifest.files) : []);
-  for (const [relPath] of expected) {
-    if (!manifestFiles.has(relPath)) {
-      // checksums-only entry without manifest entry — warn but don't fail
-      console.error(`[import-fortweb-runtime-package] checksums has entry not in manifest: ${relPath}`);
-    }
-  }
-
   return errors;
 }
 
-async function validateRequirementsContract(extractedDir, manifest) {
-  const reqPath = manifest?.contracts?.runtime_requirements?.path;
-  if (!reqPath) {
-    return ['manifest.contracts.runtime_requirements.path: missing'];
+// ── Manifest validation ─────────────────────────────────────────────────────
+
+export function validateManifestIdentity(manifest) {
+  const e = [];
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest))
+    return ['manifest.json: must be a JSON object'];
+  if (manifest.package_name !== EXPECTED_PACKAGE_NAME)
+    e.push(`manifest.json: expected package_name "${EXPECTED_PACKAGE_NAME}", got "${manifest.package_name || '(missing)'}"`);
+  if (manifest.producer !== EXPECTED_PRODUCER)
+    e.push(`manifest.json: expected producer "${EXPECTED_PRODUCER}", got "${manifest.producer || '(missing)'}"`);
+  if (manifest.payload_profile !== EXPECTED_PROFILE)
+    e.push(`manifest.json: expected payload_profile "${EXPECTED_PROFILE}", got "${manifest.payload_profile || '(missing)'}"`);
+  if (!manifest.schema_version || typeof manifest.schema_version !== 'string')
+    e.push('manifest.json: missing or invalid schema_version');
+  if (!manifest.entrypoint || typeof manifest.entrypoint !== 'string')
+    e.push('manifest.json: missing entrypoint');
+  return e;
+}
+
+export function validateManifestFiles(manifest) {
+  const files = manifest.files;
+  if (!Array.isArray(files)) return ['manifest.files: must be an array'];
+  const errors = [], seen = new Set();
+  for (let i = 0; i < files.length; i++) {
+    const entry = files[i], pf = `manifest.files[${i}]`;
+    if (!entry || typeof entry !== 'object') { errors.push(`${pf}: must be an object`); continue; }
+    if (typeof entry.path !== 'string' || entry.path.length === 0)
+      errors.push(`${pf}: missing or empty path`);
+    else if (!isSafeRelative(entry.path))
+      errors.push(`${pf}: unsafe path "${entry.path}"`);
+    else if (seen.has(entry.path))
+      errors.push(`${pf}: duplicate path "${entry.path}"`);
+    else seen.add(entry.path);
+    if (typeof entry.sha256 !== 'string' || entry.sha256.length !== 64 || !/^[0-9a-f]{64}$/.test(entry.sha256))
+      errors.push(`${pf}: sha256 must be a 64-char hex string`);
+    if (!Number.isInteger(entry.bytes) || entry.bytes < 0)
+      errors.push(`${pf}: bytes must be a non-negative integer`);
+  }
+  return errors;
+}
+
+export function validateManifestContracts(manifest) {
+  const e = [];
+  if (!manifest.contracts || typeof manifest.contracts !== 'object' || Array.isArray(manifest.contracts))
+    return ['manifest.contracts: missing or not an object'];
+  const rr = manifest.contracts.runtime_requirements;
+  if (!rr || typeof rr !== 'object') return ['manifest.contracts.runtime_requirements: missing'];
+  if (typeof rr.path !== 'string' || rr.path.length === 0)
+    e.push('manifest.contracts.runtime_requirements.path: missing or empty');
+  else if (rr.path !== EXPECTED_RR_PATH)
+    e.push(`manifest.contracts.runtime_requirements.path: expected "${EXPECTED_RR_PATH}", got "${rr.path}"`);
+  return e;
+}
+
+// ── Checksum validation ─────────────────────────────────────────────────────
+
+/**
+ * FortWeb's checksums.sha256 contains one entry: the manifest's own SHA-256.
+ * It is a self-check — the manifest.files[] array has per-file digests.
+ */
+export async function validateChecksums(checksumsPath, extractedDir, manifest) {
+  const errors = [];
+
+  // 1. Verify checksums.sha256 matches the actual manifest file
+  const manifestPath = path.join(extractedDir, MANIFEST_FILENAME);
+  let manifestDigest;
+  try { manifestDigest = await sha256File(manifestPath); }
+  catch (e) { return [`checksums.sha256: cannot hash manifest: ${e.message}`]; }
+
+  let raw;
+  try { raw = await readFile(checksumsPath, 'utf-8'); }
+  catch (e) { return [`checksums.sha256: cannot read: ${e.message}`]; }
+
+  const trimmed = raw.trim();
+  if (!trimmed) return ['checksums.sha256: empty'];
+
+  const parts = trimmed.split(/\s+/, 2);
+  if (parts.length !== 2) return [`checksums.sha256: malformed: "${trimmed.slice(0, 80)}"`];
+  const [digest, pathName] = parts;
+  if (pathName !== MANIFEST_FILENAME) {
+    errors.push(`checksums.sha256: expected path "${MANIFEST_FILENAME}", got "${pathName}"`);
+  }
+  if (digest !== manifestDigest) {
+    errors.push(`checksums.sha256: manifest digest mismatch: expected ${digest}, actual ${manifestDigest}`);
   }
 
-  const fullPath = path.join(extractedDir, reqPath);
-  if (!existsSync(fullPath)) {
-    return [`runtime requirements file not found: ${reqPath}`];
-  }
+  // 2. Verify every file in manifest.files against actual extracted bytes
+  const files = manifest?.files;
+  if (!Array.isArray(files)) return errors;
 
-  // Strict UTF-8 validation
+  for (const entry of files) {
+    const { path: rp, sha256: md, bytes } = entry;
+    const fp = path.join(extractedDir, rp);
+    if (!existsSync(fp)) { errors.push(`manifest file not found: ${rp}`); continue; }
+    try {
+      const ad = await sha256File(fp);
+      if (ad !== md) errors.push(`digest mismatch for ${rp}: manifest=${md}, actual=${ad}`);
+      const st = await lstat(fp);
+      if (st.size !== bytes) errors.push(`byte count mismatch for ${rp}: manifest=${bytes}, actual=${st.size}`);
+    } catch (er) { errors.push(`error verifying ${rp}: ${er.message}`); }
+  }
+  return errors;
+}
+
+// ── Runtime requirements validation ─────────────────────────────────────────
+
+export async function validateRuntimeRequirements(extractedDir, manifest) {
+  const rrp = manifest?.contracts?.runtime_requirements?.path;
+  if (!rrp) return ['manifest.contracts.runtime_requirements.path: missing'];
+  const fp = path.join(extractedDir, rrp);
+  if (!existsSync(fp)) return [`runtime requirements file not found: ${rrp}`];
+
   let raw;
   try {
-    raw = await readFile(fullPath, 'utf-8');
-  } catch (e) {
-    return [`runtime requirements: invalid UTF-8: ${e.message}`];
-  }
+    const buf = await readFile(fp);
+    raw = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch (e) { return [`runtime requirements: invalid UTF-8: ${e.message}`]; }
+  if (raw.includes('\uFFFD')) return ['runtime requirements: contains U+FFFD replacement characters'];
 
-  // Check for U+FFFD replacement characters (sign of non-UTF-8 bytes decoded)
-  if (raw.includes('\uFFFD')) {
-    return ['runtime requirements: contains U+FFFD replacement characters (invalid UTF-8)'];
-  }
+  let rr;
+  try { rr = JSON.parse(raw); }
+  catch (e) { return [`runtime requirements: invalid JSON: ${e.message}`]; }
 
-  // Valid JSON
+  const e = [];
+  if (!rr.schema || typeof rr.schema !== 'string') e.push('runtime requirements: missing schema');
+  if (!rr.producer || rr.producer !== manifest.producer)
+    e.push(`runtime requirements: producer mismatch (expected "${manifest.producer}", got "${rr.producer || '(missing)'}")`);
+  if (!rr.payload_profile || rr.payload_profile !== manifest.payload_profile)
+    e.push('runtime requirements: payload_profile mismatch');
+  return e;
+}
+
+// ── Transactional activation ────────────────────────────────────────────────
+
+export async function activatePayload(extractedDir, destDir, packageName) {
+  const parent = path.dirname(destDir);
+  const candidateDir = path.join(parent, '.payload-candidate');
+  const backupDir = path.join(parent, '.payload-backup');
+
+  await rm(candidateDir, { recursive: true, force: true }).catch(() => {});
+  await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+
+  const pkgDir = path.join(extractedDir, packageName);
+  const sourceDir = existsSync(pkgDir) ? pkgDir : extractedDir;
+
   try {
-    JSON.parse(raw);
+    // Copy to candidate
+    await mkdir(candidateDir, { recursive: true });
+    const entries = await readdir(sourceDir, { recursive: true, withFileTypes: true });
+    for (const ent of entries) {
+      if (!ent.isFile()) continue;
+      const src = path.join(ent.parentPath || ent.path, ent.name);
+      const rel = path.relative(sourceDir, src);
+      const dst = path.join(candidateDir, rel);
+      await mkdir(path.dirname(dst), { recursive: true });
+      await cp(src, dst);
+    }
+
+    // Backup existing → activate candidate
+    if (existsSync(destDir)) await rename(destDir, backupDir);
+    await rename(candidateDir, destDir);
+
+    // Remove backup
+    if (existsSync(backupDir)) await rm(backupDir, { recursive: true, force: true });
+
+    const count = (await readdir(destDir, { recursive: true, withFileTypes: true }))
+      .filter(e => e.isFile()).length;
+    return `staged ${count} files to ${destDir}`;
   } catch (e) {
-    return [`runtime requirements: invalid JSON: ${e.message}`];
+    // Rollback
+    try {
+      if (existsSync(backupDir)) {
+        if (existsSync(destDir)) await rm(destDir, { recursive: true, force: true });
+        await rename(backupDir, destDir);
+      }
+    } catch (_) { /* best-effort */ }
+    await rm(candidateDir, { recursive: true, force: true }).catch(() => {});
+    throw new ImportError(`activation failed: ${e.message} (previous payload preserved)`);
+  } finally {
+    await rm(candidateDir, { recursive: true, force: true }).catch(() => {});
+    await rm(backupDir, { recursive: true, force: true }).catch(() => {});
   }
-
-  return [];
 }
 
-// ── Staging ──────────────────────────────────────────────────────────────────
+// ── Core import (exported, no process.exit) ─────────────────────────────────
 
-async function activatePayload(extractedDir, packageName) {
-  // The ZIP root is typically a directory named after the package
-  const packageDir = path.join(extractedDir, packageName);
+export async function importPackage(zipPath, destDir = PAYLOAD_DEST) {
+  if (!existsSync(zipPath)) throw new ImportError(`ZIP not found: ${zipPath}`);
 
-  // If the ZIP wraps in a package-name directory, use that as source
-  const sourceDir = existsSync(packageDir) ? packageDir : extractedDir;
-
-  // Clean existing payload
-  if (existsSync(PAYLOAD_DEST)) {
-    await rm(PAYLOAD_DEST, { recursive: true, force: true });
-  }
-  await mkdir(PAYLOAD_DEST, { recursive: true });
-
-  // Copy all files preserving structure
-  const entries = await readdir(sourceDir, { recursive: true, withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-
-    // Use path.relative against sourceDir to get the relative path within the package
-    const entryFull = path.join(entry.parentPath || entry.path, entry.name);
-    const relPath = path.relative(sourceDir, entryFull);
-
-    const destPath = path.join(PAYLOAD_DEST, relPath);
-    await mkdir(path.dirname(destPath), { recursive: true });
-
-    const buf = await readFile(entryFull);
-    await writeFile(destPath, buf);
-  }
-
-  const fileCount = (await readdir(PAYLOAD_DEST, { recursive: true, withFileTypes: true }))
-    .filter(e => e.isFile()).length;
-  console.error(`[import-fortweb-runtime-package] staged ${fileCount} files to ${PAYLOAD_DEST}`);
-}
-
-// ── Main ─────────────────────────────────────────────────────────────────────
-
-async function main() {
-  const zipPath = process.argv[2];
-  if (!zipPath) {
-    panic('usage: node tools/import-fortweb-runtime-package.mjs <runtime-package.zip>');
-  }
-
-  if (!existsSync(zipPath)) {
-    panic(`ZIP not found: ${zipPath}`);
-  }
-
-  // Phase 1: List entries and validate safety
   const entries = unzipList(zipPath);
-  console.error(`[import-fortweb-runtime-package] ZIP contains ${entries.length} entries`);
+  const entryErrs = validateEntries(entries);
+  if (entryErrs.length > 0) throw new ImportError(`entries:\n  - ${entryErrs.join('\n  - ')}`);
 
-  let entryErrors = await validateEntryList(entries);
-  if (entryErrors.length > 0) {
-    for (const err of entryErrors) panic(`entry validation: ${err}`);
-  }
-
-  // Phase 2: Extract to temp
   const tempDir = path.join(tmpdir(), `fortoid-import-${Date.now()}`);
   await mkdir(tempDir, { recursive: true });
-  unzip(zipPath, tempDir);
-
   try {
-    // Determine package root (ZIP may wrap in a directory)
-    let packageRoot = tempDir;
-    const topEntries = await readdir(tempDir, { withFileTypes: true });
-    const topDirs = topEntries.filter(e => e.isDirectory());
-    if (topDirs.length === 1) {
-      packageRoot = path.join(tempDir, topDirs[0].name);
-    }
+    unzipExtract(zipPath, tempDir);
 
-    // Phase 3: Validate manifest
-    const manifestPath = path.join(packageRoot, MANIFEST_FILENAME);
-    if (!existsSync(manifestPath)) {
-      panic(`${MANIFEST_FILENAME} not found in package`);
-    }
+    let pkgRoot = tempDir;
+    const tops = await readdir(tempDir, { withFileTypes: true });
+    const dirs = tops.filter(e => e.isDirectory());
+    if (dirs.length === 1) pkgRoot = path.join(tempDir, dirs[0].name);
 
+    const mfPath = path.join(pkgRoot, MANIFEST_FILENAME);
+    if (!existsSync(mfPath)) throw new ImportError(`${MANIFEST_FILENAME} not found`);
     let manifest;
-    try {
-      manifest = JSON.parse(await readFile(manifestPath, 'utf-8'));
-    } catch (e) {
-      panic(`manifest.json parse error: ${e.message}`);
-    }
+    try { manifest = JSON.parse(await readFile(mfPath, 'utf-8')); }
+    catch (e) { throw new ImportError(`manifest.json: invalid JSON: ${e.message}`); }
 
-    const manifestErrors = await validateManifest(manifestPath, EXPECTED_PACKAGE_NAME);
-    if (manifestErrors.length > 0) {
-      for (const err of manifestErrors) panic(err);
-    }
-    console.error(`[import-fortweb-runtime-package] manifest: ${manifest.package_name} v${manifest.schema_version}, producer=${manifest.producer}, profile=${manifest.payload_profile}`);
+    const idErr = validateManifestIdentity(manifest);
+    if (idErr.length) throw new ImportError(`manifest:\n  - ${idErr.join('\n  - ')}`);
+    const fileErr = validateManifestFiles(manifest);
+    if (fileErr.length) throw new ImportError(`manifest.files:\n  - ${fileErr.join('\n  - ')}`);
+    const ctErr = validateManifestContracts(manifest);
+    if (ctErr.length) throw new ImportError(`contracts:\n  - ${ctErr.join('\n  - ')}`);
 
-    // Phase 4: Validate checksums
-    const checksumsPath = path.join(packageRoot, CHECKSUM_FILENAME);
-    if (!existsSync(checksumsPath)) {
-      panic(`${CHECKSUM_FILENAME} not found in package`);
-    }
+    const csPath = path.join(pkgRoot, CHECKSUM_FILENAME);
+    if (!existsSync(csPath)) throw new ImportError(`${CHECKSUM_FILENAME} not found`);
+    const csErr = await validateChecksums(csPath, pkgRoot, manifest);
+    if (csErr.length) throw new ImportError(`checksums:\n  - ${csErr.join('\n  - ')}`);
 
-    const checksumErrors = await validateChecksums(checksumsPath, packageRoot, manifest);
-    if (checksumErrors.length > 0) {
-      for (const err of checksumErrors) panic(err);
-    }
-    console.error(`[import-fortweb-runtime-package] checksums: verified`);
+    const rrErr = await validateRuntimeRequirements(pkgRoot, manifest);
+    if (rrErr.length) throw new ImportError(`requirements:\n  - ${rrErr.join('\n  - ')}`);
 
-    // Phase 5: Validate requirements contract
-    const reqErrors = await validateRequirementsContract(packageRoot, manifest);
-    if (reqErrors.length > 0) {
-      for (const err of reqErrors) panic(err);
-    }
-    console.error(`[import-fortweb-runtime-package] runtime requirements: present and valid`);
-
-    // Phase 6: Activate payload
-    await activatePayload(packageRoot, EXPECTED_PACKAGE_NAME);
-    console.error(`[import-fortweb-runtime-package] import complete`);
+    return await activatePayload(pkgRoot, destDir, EXPECTED_PACKAGE_NAME);
   } finally {
-    // Clean temp
     await rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-main().catch((e) => {
-  console.error(`[import-fortweb-runtime-package] fatal: ${e.message}`);
-  process.exit(1);
-});
+// ── CLI ─────────────────────────────────────────────────────────────────────
+
+async function main() {
+  const zipPath = process.argv[2];
+  if (!zipPath) { console.error('usage: node tools/import-fortweb-runtime-package.mjs <zip>'); process.exit(2); }
+  try {
+    const msg = await importPackage(zipPath);
+    console.error(`[import-fortweb-runtime-package] ${msg}`);
+    process.exit(0);
+  } catch (e) {
+    console.error(`[import-fortweb-runtime-package] ${e.message}`);
+    process.exit(1);
+  }
+}
+if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*[\\/]/, ''))) {
+  main();
+}

@@ -5,6 +5,7 @@
   "scripts": {
     "validate:runtime-platform-config": "node tools/validate-runtime-platform-config.mjs",
     "test:runtime-platform-config": "node --test tools/validate-runtime-platform-config.test.mjs",
-    "import:fortweb-runtime-package": "node tools/import-fortweb-runtime-package.mjs"
+    "import:fortweb-runtime-package": "node tools/import-fortweb-runtime-package.mjs",
+    "test:import-fortweb-runtime-package": "node --test tools/import-fortweb-runtime-package.test.mjs"
   }
 }

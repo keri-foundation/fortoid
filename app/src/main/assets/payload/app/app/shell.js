@@ -143,7 +143,7 @@ export function renderShell(root, { route, page, state, vault, actions }) {
                             </button>
                         `
         : `
-                            <button class="icon-button" data-action="toggle-drawer" aria-label="Vaults">
+                            <button class="icon-button" data-action="toggle-drawer" aria-label="Vaults"${state.drawerReady ? "" : " disabled"}>
                                 <img src="./assets/icons/vault-drawer.svg" data-hover-src="./assets/icons/vault-drawer-hover.svg" alt="">
                             </button>
                         `}
