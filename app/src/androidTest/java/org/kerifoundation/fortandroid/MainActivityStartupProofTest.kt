@@ -11,18 +11,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Instrumentation proof that the production MainActivity successfully
  * loads the canonical FortWeb runtime under the expected trust boundary.
  *
+ * Observes the real production WebView non-invasively via periodic
+ * evaluateJavascript polling. Does NOT replace FortWebViewClient.
+ *
  * Evidence classification: ANDROID-CANONICAL-STARTUP
- * — proves MainActivity loads the real producer entrypoint
- * — proves __FORT_RUNTIME_ORIGIN__ is injected before navigation
- * — proves secure context and trusted origin
- * — does NOT prove Pyodide/Worker execution
  */
 @RunWith(AndroidJUnit4::class)
 class MainActivityStartupProofTest {
@@ -36,73 +34,19 @@ class MainActivityStartupProofTest {
 
     @Test
     fun mainActivityLoadsCanonicalFortWebEntrypoint() {
-        val pageLoaded = CountDownLatch(1)
         val originHolder = AtomicReference<String>()
         val pathHolder = AtomicReference<String>()
-        val secureContextHolder = AtomicBoolean(false)
+        val secureContextHolder = AtomicReference<Boolean>()
         val fortOriginHolder = AtomicReference<String>()
-        val errorHolder = AtomicReference<String>()
+        val titleHolder = AtomicReference<String>()
+        val appRootHolder = AtomicReference<Boolean>()
+        val done = CountDownLatch(1)
 
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        scenario.onActivity { activity ->
-            val wvField = MainActivity::class.java.getDeclaredField("webView")
-            wvField.isAccessible = true
-            @Suppress("UNCHECKED_CAST")
-            val wv = wvField.get(activity) as? WebView
-            assertNotNull("MainActivity must have a WebView", wv)
+        pollStartupState(done, originHolder, pathHolder, secureContextHolder,
+            fortOriginHolder, titleHolder, appRootHolder)
 
-            wv?.webViewClient = object : androidx.webkit.WebViewClientCompat() {
-
-                override fun onPageFinished(view: WebView, url: String?) {
-                    view.evaluateJavascript(
-                        "(function(){" +
-                        "return JSON.stringify({" +
-                        "origin: location.origin," +
-                        "pathname: location.pathname," +
-                        "isSecureContext: window.isSecureContext || false," +
-                        "fortOrigin: typeof window.__FORT_RUNTIME_ORIGIN__ === 'object' " +
-                        "  ? window.__FORT_RUNTIME_ORIGIN__.documentOrigin : null" +
-                        "});" +
-                        "})()"
-                    ) { json ->
-                        val trimmed = json?.trim('"')?.replace("\\\"", "\"") ?: "{}"
-                        try {
-                            val result = org.json.JSONObject(trimmed)
-                            originHolder.set(result.optString("origin", ""))
-                            pathHolder.set(result.optString("pathname", ""))
-                            secureContextHolder.set(result.optBoolean("isSecureContext", false))
-                            val fo = result.optString("fortOrigin", "")
-                            if (fo.isNotEmpty() && fo != "null") {
-                                fortOriginHolder.set(fo)
-                            }
-                            pageLoaded.countDown()
-                        } catch (_: Exception) {
-                            errorHolder.set("JSON parse: $trimmed")
-                            pageLoaded.countDown()
-                        }
-                    }
-                }
-
-                override fun onReceivedError(
-                    view: WebView, request: android.webkit.WebResourceRequest,
-                    error: androidx.webkit.WebResourceErrorCompat
-                ) {
-                    if (request.isForMainFrame) {
-                        errorHolder.set("Main frame error: code=${error.errorCode} desc=${error.description}")
-                        pageLoaded.countDown()
-                    }
-                }
-            }
-        }
-
-        assertTrue("page load timed out", pageLoaded.await(30, TimeUnit.SECONDS))
-
-        val loadError = errorHolder.get()
-        if (loadError != null) {
-            // If there's a load error, it might be the native error view
-            // which means the startup failed — check if origin was set
-            assertTrue("startup failed with error: $loadError", false)
-        }
+        assertTrue("startup proof timed out", done.await(25, TimeUnit.SECONDS))
 
         assertEquals(
             "must load from trusted origin",
@@ -112,7 +56,7 @@ class MainActivityStartupProofTest {
             "must load canonical FortWeb entrypoint",
             "/app/index.html", pathHolder.get()
         )
-        assertTrue("must be secure context", secureContextHolder.get())
+        assertTrue("must be secure context", secureContextHolder.get() == true)
 
         val fortOrigin = fortOriginHolder.get()
         assertNotNull("__FORT_RUNTIME_ORIGIN__ must be injected", fortOrigin)
@@ -120,5 +64,86 @@ class MainActivityStartupProofTest {
             "injected origin must match trusted origin",
             "https://appassets.androidplatform.net", fortOrigin
         )
+
+        val title = titleHolder.get()
+        assertNotNull("page must have a title", title)
+        assertTrue("page title must not be empty", title!!.isNotEmpty())
+
+        val hasAppRoot = appRootHolder.get()
+        assertTrue("page must contain #app-root", hasAppRoot == true)
+    }
+
+    private fun pollStartupState(
+        done: CountDownLatch,
+        origin: AtomicReference<String>,
+        path: AtomicReference<String>,
+        secureContext: AtomicReference<Boolean>,
+        fortOrigin: AtomicReference<String>,
+        title: AtomicReference<String>,
+        appRoot: AtomicReference<Boolean>
+    ) {
+        val deadline = System.currentTimeMillis() + 24_000
+
+        fun schedulePoll() {
+            if (done.count == 0L) return
+            if (System.currentTimeMillis() > deadline) {
+                done.countDown()
+                return
+            }
+            try {
+                scenario.onActivity { activity ->
+                    val wvField = MainActivity::class.java.getDeclaredField("webView")
+                    wvField.isAccessible = true
+                    @Suppress("UNCHECKED_CAST")
+                    val wv = wvField.get(activity) as? WebView
+                    if (wv == null) {
+                        activity.window?.decorView?.postDelayed({ schedulePoll() }, 500)
+                        return@onActivity
+                    }
+
+                    wv.evaluateJavascript(
+                        "(function(){" +
+                        "return JSON.stringify({" +
+                        "origin: location.origin || ''," +
+                        "pathname: location.pathname || ''," +
+                        "isSecureContext: window.isSecureContext || false," +
+                        "fortOrigin: (window.__FORT_RUNTIME_ORIGIN__ && " +
+                        "  window.__FORT_RUNTIME_ORIGIN__.documentOrigin) || null," +
+                        "title: document.title || ''," +
+                        "hasAppRoot: document.getElementById('app-root') !== null" +
+                        "});" +
+                        "})()"
+                    ) { json ->
+                        val trimmed = json?.trim('"')?.replace("\\\"", "\"") ?: "{}"
+                        try {
+                            val result = org.json.JSONObject(trimmed)
+                            val o = result.optString("origin", "")
+                            val p = result.optString("pathname", "")
+                            if (o == "https://appassets.androidplatform.net"
+                                && p == "/app/index.html") {
+                                origin.set(o)
+                                path.set(p)
+                                secureContext.set(result.optBoolean("isSecureContext", false))
+                                val fo = result.optString("fortOrigin", "")
+                                if (fo.isNotEmpty() && fo != "null") fortOrigin.set(fo)
+                                title.set(result.optString("title", ""))
+                                appRoot.set(result.optBoolean("hasAppRoot", false))
+                                done.countDown()
+                            } else {
+                                wv.postDelayed({ schedulePoll() }, 500)
+                            }
+                        } catch (_: Exception) {
+                            wv.postDelayed({ schedulePoll() }, 500)
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                    { schedulePoll() }, 500
+                )
+            }
+        }
+
+        schedulePoll()
     }
 }

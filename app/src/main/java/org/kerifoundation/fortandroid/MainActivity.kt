@@ -176,42 +176,55 @@ class MainActivity : AppCompatActivity() {
         webView = freshWebView
 
         if (loadPayload) {
-            injectRuntimeOriginContract(freshWebView)
+            if (!prepareRuntimeOriginContract(freshWebView)) {
+                showError(R.string.payload_load_failed)
+                return
+            }
             freshWebView.loadUrl(PAYLOAD_URL)
         }
     }
 
-    private fun injectRuntimeOriginContract(webView: WebView) {
+    /**
+     * Loads, decodes, validates, and injects the Android runtime-origin contract.
+     * Returns true only if every step succeeds; false prevents navigation.
+     */
+    private fun prepareRuntimeOriginContract(webView: WebView): Boolean {
+        // Fail closed if document-start JS is unavailable
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            Log.e(LOG_TAG, "DOCUMENT_START_SCRIPT not supported — cannot inject runtime origin")
+            return false
+        }
+
+        val bytes: ByteArray
         try {
             val stream = assets.open("android/runtime-origin-contract.json")
-            val bytes = ByteArrayOutputStream()
-            stream.copyTo(bytes)
+            bytes = ByteArrayOutputStream().use { out ->
+                stream.copyTo(out)
+                out.toByteArray()
+            }
             stream.close()
-            val contractJson = bytes.toString("UTF-8")
-
-            // Validate before injection — fail closed on any defect
-            val contract = org.json.JSONObject(contractJson)
-            val schema = contract.optString("schema", "")
-            if (schema != "fortweb.runtime-origin.v1") {
-                throw IllegalStateException("Runtime origin contract schema invalid: $schema")
-            }
-            if (contract.optInt("version", -1) != 1) {
-                throw IllegalStateException("Runtime origin contract version invalid")
-            }
-            val platform = contract.optString("platform", "")
-            if (platform != "android-webview") {
-                throw IllegalStateException("Runtime origin contract platform invalid: $platform")
-            }
-            val docOrigin = contract.optString("documentOrigin", "")
-            if (docOrigin != TRUSTED_ORIGIN_RULE) {
-                throw IllegalStateException("Runtime origin contract documentOrigin mismatch: $docOrigin")
-            }
-
-            val script = "window.__FORT_RUNTIME_ORIGIN__ = $contractJson;"
-            WebViewCompat.addDocumentStartJavaScript(webView, script, setOf(TRUSTED_ORIGIN_RULE))
         } catch (e: Exception) {
-            Log.e(LOG_TAG, "Failed to inject runtime-origin contract — startup aborted", e)
-            showError(R.string.payload_load_failed)
+            Log.e(LOG_TAG, "Cannot open runtime-origin contract", e)
+            return false
+        }
+
+        val result = AndroidRuntimeOriginContract.validate(bytes)
+        return when (result) {
+            is AndroidRuntimeOriginContract.Result.Valid -> {
+                val script = "window.__FORT_RUNTIME_ORIGIN__ = ${result.contract.jsonString};"
+                try {
+                    WebViewCompat.addDocumentStartJavaScript(webView, script, setOf(TRUSTED_ORIGIN_RULE))
+                    Log.i(LOG_TAG, "Runtime-origin contract injected successfully")
+                    true
+                } catch (e: Exception) {
+                    Log.e(LOG_TAG, "addDocumentStartJavaScript failed", e)
+                    false
+                }
+            }
+            is AndroidRuntimeOriginContract.Result.Invalid -> {
+                Log.e(LOG_TAG, "Runtime-origin contract validation failed: ${result.reason}")
+                false
+            }
         }
     }
 

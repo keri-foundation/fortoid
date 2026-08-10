@@ -116,17 +116,10 @@ jobs:
           if [ "$SDK" != "36" ]; then echo "FAIL: expected SDK 36, got $SDK"; exit 1; fi
           echo "SDK: $SDK — OK"
 
-      - name: Build and install APKs
+      - name: Build and run MainActivity startup proof
         run: |
-          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
-          adb install -r app/build/outputs/apk/debug/app-debug.apk
-          adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-
-      - name: Run MainActivity startup proof
-        run: |
-          adb shell am instrument -w -r \
-            -e class org.kerifoundation.fortandroid.MainActivityStartupProofTest \
-            org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner
+          ./gradlew :app:connectedDebugAndroidTest --no-daemon \
+            -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.MainActivityStartupProofTest
 
       - name: Verify startup JUnit XML
         if: always()
