@@ -1,4 +1,4 @@
-name: Android WebView Persistence Proof
+name: Android API 36 Persistence Proof
 
 permissions:
   contents: read
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   persistence-proof:
-    name: Android IndexedDB process-relaunch proof
+    name: Android API 36 persistence proof
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -48,13 +48,26 @@ jobs:
           export ANDROID_AVD_HOME="$HOME/.android/avd"
           echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
           mkdir -p "$ANDROID_AVD_HOME"
+          echo "=== Available device profiles ==="
+          avdmanager list device | grep -E '^id:|Name:|OEM '
+          echo "=== Requiring pixel_8 ==="
+          if ! avdmanager list device | grep -q 'id:.*pixel_8'; then
+            echo "FAIL: pixel_8 not found in device catalog"
+            avdmanager list device
+            exit 1
+          fi
           echo "y" | sdkmanager "system-images;android-36;google_apis;x86_64"
           echo "no" | avdmanager create avd \
             --name "persist-test" \
             --package "system-images;android-36;google_apis;x86_64" \
-            --device "pixel_9" \
+            --device "pixel_8" \
             --force
+          echo "=== Created AVDs ==="
           $ANDROID_HOME/emulator/emulator -list-avds
+          if ! $ANDROID_HOME/emulator/emulator -list-avds | grep -q 'persist-test'; then
+            echo "FAIL: AVD persist-test was not created"
+            exit 1
+          fi
 
       - name: Start emulator
         timeout-minutes: 8
@@ -70,11 +83,12 @@ jobs:
           adb shell input keyevent 82
           echo "Emulator ready"
 
-      - name: Verify API 36
+      - name: Verify API 36 WebView baseline
         run: |
           SDK=$(adb shell getprop ro.build.version.sdk)
           if [ "$SDK" != "36" ]; then echo "FAIL: expected SDK 36, got $SDK"; exit 1; fi
           echo "SDK: $SDK — OK"
+          echo "Baseline: API 36 WebView on pixel_8 AVD"
 
       - name: Build APKs (once)
         run: |
@@ -106,23 +120,31 @@ jobs:
             org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner 2>&1)
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "OK (" || { echo "FAIL: write phase did not report OK"; exit 1; }
-          WRITE_PID=$(echo "$OUTPUT" | grep -oP 'WRITE_PID=\K\d+' || echo "0")
-          if [ "$WRITE_PID" = "0" ]; then echo "FAIL: could not capture write PID"; exit 1; fi
+          # Parse PID from instrumentation status Bundle: INSTRUMENTATION_STATUS: WRITE_PID=12345
+          WRITE_PID=$(echo "$OUTPUT" | grep -oP 'INSTRUMENTATION_STATUS:\s*WRITE_PID=\K\d+' || echo "")
+          if [ -z "$WRITE_PID" ]; then echo "FAIL: could not capture WRITE_PID from instrumentation status"; exit 1; fi
+          if ! [[ "$WRITE_PID" =~ ^[1-9][0-9]*$ ]]; then echo "FAIL: WRITE_PID is not a positive integer: $WRITE_PID"; exit 1; fi
           echo "write_pid=$WRITE_PID" >> $GITHUB_OUTPUT
           echo "Write PID: $WRITE_PID"
 
-      - name: Force-stop target process
+      - name: Force-stop and verify exact PID absent
         run: |
           WRITE_PID="${{ steps.write.outputs.write_pid }}"
-          # Verify process exists before stopping
-          adb shell ps | grep "org.kerifoundation.fortandroid" || { echo "FAIL: target process not found before force-stop"; exit 1; }
-          adb shell am force-stop org.kerifoundation.fortandroid
-          sleep 3
-          if adb shell ps | grep -q "org.kerifoundation.fortandroid"; then
-            echo "FAIL: process $WRITE_PID still running after force-stop"
+          # Verify the exact PID exists before stopping
+          if ! adb shell ps -p "$WRITE_PID" > /dev/null 2>&1; then
+            echo "FAIL: PID $WRITE_PID not found before force-stop"
+            adb shell ps | grep -i fort || true
             exit 1
           fi
-          echo "Process $WRITE_PID terminated — OK"
+          echo "PID $WRITE_PID confirmed running"
+          adb shell am force-stop org.kerifoundation.fortandroid
+          sleep 3
+          # Verify the exact PID no longer exists
+          if adb shell ps -p "$WRITE_PID" > /dev/null 2>&1; then
+            echo "FAIL: PID $WRITE_PID still running after force-stop"
+            exit 1
+          fi
+          echo "PID $WRITE_PID confirmed terminated — OK"
 
       - name: Run PersistenceReadTest
         id: read
@@ -134,8 +156,10 @@ jobs:
             org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner 2>&1)
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "OK (" || { echo "FAIL: read phase did not report OK"; exit 1; }
-          READ_PID=$(echo "$OUTPUT" | grep -oP 'READ_PID=\K\d+' || echo "0")
-          if [ "$READ_PID" = "0" ]; then echo "FAIL: could not capture read PID"; exit 1; fi
+          # Parse PID from instrumentation status Bundle: INSTRUMENTATION_STATUS: READ_PID=54321
+          READ_PID=$(echo "$OUTPUT" | grep -oP 'INSTRUMENTATION_STATUS:\s*READ_PID=\K\d+' || echo "")
+          if [ -z "$READ_PID" ]; then echo "FAIL: could not capture READ_PID from instrumentation status"; exit 1; fi
+          if ! [[ "$READ_PID" =~ ^[1-9][0-9]*$ ]]; then echo "FAIL: READ_PID is not a positive integer: $READ_PID"; exit 1; fi
           echo "read_pid=$READ_PID" >> $GITHUB_OUTPUT
           echo "Read PID: $READ_PID"
 

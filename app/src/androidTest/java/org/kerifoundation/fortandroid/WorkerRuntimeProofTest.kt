@@ -97,7 +97,6 @@ class WorkerRuntimeProofTest {
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private fun createAssetLoader(context: android.content.Context): WebViewAssetLoader {
-        // Use instrumentation context for androidTest assets
         val assetsHandler = WebViewAssetLoader.AssetsPathHandler(context)
         val pathHandler = TestAssetPathHandler(assetsHandler)
         return WebViewAssetLoader.Builder()
@@ -107,36 +106,34 @@ class WorkerRuntimeProofTest {
             .build()
     }
 
-    private fun loadPageAndPoll(
+    /**
+     * Configure the WebView, initiate navigation, and return immediately.
+     * The caller waits on [latch] on the instrumentation test thread.
+     * WebView callbacks and polling run on the main thread.
+     */
+    private fun configureAndNavigate(
         activity: WorkerProbeActivity,
         pagePath: String,
-        timeoutSeconds: Long = 15
-    ): Map<String, Any?> {
+        latch: CountDownLatch,
+        resultHolder: Array<Map<String, Any?>?>
+    ) {
         val instrCtx = InstrumentationRegistry.getInstrumentation().context
         val loader = createAssetLoader(instrCtx)
         val url = "https://appassets.androidplatform.net/$pagePath"
-        val resultLatch = CountDownLatch(1)
-        val resultHolder = arrayOf<Map<String, Any?>?>(null)
 
-        activity.runOnUiThread {
-            activity.webView.webViewClient = object : androidx.webkit.WebViewClientCompat() {
-                override fun shouldInterceptRequest(
-                    view: WebView,
-                    request: android.webkit.WebResourceRequest
-                ): WebResourceResponse? {
-                    return loader.shouldInterceptRequest(request.url)
-                }
-
-                override fun onPageFinished(view: WebView, url: String?) {
-                    view.postDelayed({ pollForResult(view, resultHolder, resultLatch) }, 500)
-                }
+        activity.webView.webViewClient = object : androidx.webkit.WebViewClientCompat() {
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: android.webkit.WebResourceRequest
+            ): WebResourceResponse? {
+                return loader.shouldInterceptRequest(request.url)
             }
-            activity.webView.loadUrl(url)
-        }
 
-        assertTrue("timeout waiting for worker result", resultLatch.await(timeoutSeconds, TimeUnit.SECONDS))
-        assertNotNull("probe result must not be null", resultHolder[0])
-        return resultHolder[0]!!
+            override fun onPageFinished(view: WebView, url: String?) {
+                view.postDelayed({ pollForResult(view, resultHolder, latch) }, 500)
+            }
+        }
+        activity.webView.loadUrl(url)
     }
 
     private fun pollForResult(view: WebView, holder: Array<Map<String, Any?>?>, latch: CountDownLatch) {
@@ -167,32 +164,48 @@ class WorkerRuntimeProofTest {
 
     @Test
     fun dedicatedWorkerCompletesSameOriginRoundTrip() {
+        val latch = CountDownLatch(1)
+        @Suppress("UNCHECKED_CAST")
+        val resultHolder = arrayOfNulls<Map<String, Any?>>(1)
+
         scenario = ActivityScenario.launch(WorkerProbeActivity::class.java)
         scenario.onActivity { activity ->
-            val result = loadPageAndPoll(activity, "worker-probe/index.html")
-            // Assertions on test thread (not UI thread)
-            assertEquals("done", result["state"])
-            @Suppress("UNCHECKED_CAST")
-            val reply = result["reply"] as? Map<String, Any?>
-            assertNotNull("worker must send a reply", reply)
-            assertEquals("pong", reply?.get("type"))
-            assertEquals("https://appassets.androidplatform.net", reply?.get("origin"))
-            assertEquals(true, reply?.get("isSecureContext"))
+            configureAndNavigate(activity, "worker-probe/index.html", latch, resultHolder)
         }
+        // onActivity has returned; wait on the instrumentation test thread
+        assertTrue("timeout waiting for worker result", latch.await(15, TimeUnit.SECONDS))
+        assertNotNull("probe result must not be null", resultHolder[0])
+
+        val result = resultHolder[0]!!
+        assertEquals("done", result["state"])
+        @Suppress("UNCHECKED_CAST")
+        val reply = result["reply"] as? Map<String, Any?>
+        assertNotNull("worker must send a reply", reply)
+        assertEquals("pong", reply?.get("type"))
+        assertEquals("https://appassets.androidplatform.net", reply?.get("origin"))
+        assertEquals(true, reply?.get("isSecureContext"))
     }
 
     @Test
     fun missingWorkerScriptFailsClosed() {
+        val latch = CountDownLatch(1)
+        @Suppress("UNCHECKED_CAST")
+        val resultHolder = arrayOfNulls<Map<String, Any?>>(1)
+
         scenario = ActivityScenario.launch(WorkerProbeActivity::class.java)
         scenario.onActivity { activity ->
-            val result = loadPageAndPoll(activity, "worker-probe/missing-worker.html")
-            assertEquals("error", result["state"])
-            val category = result["category"] as? String
-            assertNotNull("error must have a category", category)
-            assertTrue(
-                "category must indicate script load or constructor failure, got: $category",
-                category == "WORKER_SCRIPT_LOAD_FAILURE" || category == "WORKER_CONSTRUCTOR_FAILURE"
-            )
+            configureAndNavigate(activity, "worker-probe/missing-worker.html", latch, resultHolder)
         }
+        assertTrue("timeout waiting for negative control", latch.await(15, TimeUnit.SECONDS))
+        assertNotNull("probe result must not be null", resultHolder[0])
+
+        val result = resultHolder[0]!!
+        assertEquals("error", result["state"])
+        val category = result["category"] as? String
+        assertNotNull("error must have a category", category)
+        assertTrue(
+            "category must indicate script load or constructor failure, got: $category",
+            category == "WORKER_SCRIPT_LOAD_FAILURE" || category == "WORKER_CONSTRUCTOR_FAILURE"
+        )
     }
 }

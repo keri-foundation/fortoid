@@ -1,4 +1,4 @@
-name: Android WebView Runtime Proof
+name: Android API 36 Worker Proof
 
 permissions:
   contents: read
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   worker-proof:
-    name: Android WebView worker proof
+    name: Android API 36 worker proof
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -48,20 +48,34 @@ jobs:
           export ANDROID_AVD_HOME="$HOME/.android/avd"
           echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
           mkdir -p "$ANDROID_AVD_HOME"
+          echo "=== Available device profiles ==="
+          avdmanager list device | grep -E '^id:|Name:|OEM '
+          echo "=== Requiring pixel_8 ==="
+          if ! avdmanager list device | grep -q 'id:.*pixel_8'; then
+            echo "FAIL: pixel_8 not found in device catalog"
+            avdmanager list device
+            exit 1
+          fi
           echo "y" | sdkmanager "system-images;android-36;google_apis;x86_64"
           echo "no" | avdmanager create avd \
             --name "worker-test" \
             --package "system-images;android-36;google_apis;x86_64" \
-            --device "pixel_9" \
+            --device "pixel_8" \
             --force
+          echo "=== Created AVDs ==="
           $ANDROID_HOME/emulator/emulator -list-avds
+          if ! $ANDROID_HOME/emulator/emulator -list-avds | grep -q 'worker-test'; then
+            echo "FAIL: AVD worker-test was not created"
+            exit 1
+          fi
 
       - name: Record emulator configuration
         run: |
           echo "API level: 36"
           echo "ABI: x86_64"
           echo "System image: google_apis"
-          echo "Device: Pixel 9"
+          echo "Device profile: pixel_8"
+          echo "Baseline: API 36 WebView (not Pixel 9 or Galaxy S26 hardware proof)"
 
       - name: Start emulator
         timeout-minutes: 8
@@ -92,7 +106,7 @@ jobs:
           adb shell dumpsys webviewupdate | grep -E 'Current|version|package' || echo "WebView info N/A"
           adb shell pm list packages | grep -i webview || echo "No webview packages"
 
-      - name: Verify API 36 and Pixel 9 identity
+      - name: Verify API 36 WebView baseline
         run: |
           SDK=$(adb shell getprop ro.build.version.sdk)
           if [ "$SDK" != "36" ]; then
@@ -102,7 +116,8 @@ jobs:
           echo "SDK level: $SDK — OK"
           MODEL=$(adb shell getprop ro.product.model)
           echo "Model: $MODEL"
-          echo "Device identity captured"
+          echo "Baseline: API 36 WebView on pixel_8 AVD"
+          echo "This is NOT Pixel 9 or Galaxy S26 hardware proof."
 
       - name: Build and run instrumentation tests
         run: ./gradlew :app:connectedDebugAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.WorkerRuntimeProofTest
