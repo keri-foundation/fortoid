@@ -82,7 +82,7 @@ class PyodideWorkerRuntimeProofTest {
         val preloadFailed = AtomicBoolean(false)
         val preloadFailedReason = AtomicReference<String>()
         val mainResourceError = AtomicReference<String>()
-        val pageFinished = AtomicBoolean(false)
+        val pageFinishedAtMs = java.util.concurrent.atomic.AtomicLong(0L)
 
         // Native bridge listener for producer diagnostics
         val nativeEvents = mutableListOf<NativeEvent>()
@@ -142,15 +142,42 @@ class PyodideWorkerRuntimeProofTest {
             wv.webViewClient = object : androidx.webkit.WebViewClientCompat() {
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                     val url = request.url.toString()
-                    val response = loader.shouldInterceptRequest(request.url)
                     if (request.isForMainFrame) {
+                        val response = loader.shouldInterceptRequest(request.url)
                         Log.i(TAG, "STAGE=MAIN_RESOURCE_INTERCEPTED url=$url intercepted=${response != null}")
+                        return response
                     }
-                    // Log key resources
-                    if (url.contains("bridge.js") || url.contains("wallet-worker") || url.contains("pyscript")) {
-                        Log.i(TAG, "RESOURCE url=$url intercepted=${response != null}")
+
+                    // CDN→local Pyodide redirect (same policy as production MainActivity)
+                    val localUri = WebRequestPolicy.mapPyodideCdnToLocal(request.url)
+                    if (localUri != null) {
+                        Log.i(TAG, "STAGE=PYODIDE_CDN_REDIRECT from=$url to=$localUri")
+                        val response = loader.shouldInterceptRequest(localUri)
+                        if (response != null) {
+                            val headers = response.responseHeaders?.toMutableMap() ?: mutableMapOf()
+                            headers["Access-Control-Allow-Origin"] = "*"
+                            headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+                            response.responseHeaders = headers
+                            return response
+                        }
+                        Log.e(TAG, "STAGE=PYODIDE_LOCAL_MISSING mapped=$localUri")
+                        return createBlockedResponse()
                     }
-                    return response
+
+                    // Block external requests (offline runtime)
+                    if (request.url.host != "appassets.androidplatform.net") {
+                        Log.w(TAG, "STAGE=BLOCKED_EXTERNAL url=$url")
+                        return createBlockedResponse()
+                    }
+
+                    return loader.shouldInterceptRequest(request.url)
+                }
+
+                private fun createBlockedResponse(): WebResourceResponse {
+                    return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0))).apply {
+                        setStatusCodeAndReasonPhrase(403, "Forbidden")
+                        responseHeaders = mapOf("Cache-Control" to "no-store")
+                    }
                 }
 
                 override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -159,7 +186,7 @@ class PyodideWorkerRuntimeProofTest {
 
                 override fun onPageFinished(view: WebView, url: String?) {
                     Log.i(TAG, "STAGE=PAGE_FINISHED url=$url")
-                    pageFinished.set(true)
+                    pageFinishedAtMs.compareAndSet(0L, SystemClock.elapsedRealtime())
                 }
 
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: androidx.webkit.WebResourceErrorCompat) {
@@ -211,10 +238,11 @@ class PyodideWorkerRuntimeProofTest {
             lastObservation.set(obs)
 
             // Fail fast if probe page loaded but script never initialized
-            if (pageFinished.get() && SystemClock.elapsedRealtime() > SystemClock.elapsedRealtime() - deadline + PROBE_INIT_TIMEOUT_MS) {
-                if (obs.stage == "unknown" && obs.state == "loading") {
-                    fail("PROBE_SCRIPT_NOT_INITIALIZED: page loaded but probe global never appeared")
-                }
+            val finishedAt = pageFinishedAtMs.get()
+            if (finishedAt > 0L &&
+                SystemClock.elapsedRealtime() - finishedAt >= PROBE_INIT_TIMEOUT_MS &&
+                obs.stage == "unknown" && obs.state == "loading") {
+                fail("PROBE_SCRIPT_NOT_INITIALIZED: page loaded but probe global never appeared")
             }
 
             if (obs.state == "error") {

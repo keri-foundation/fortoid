@@ -116,7 +116,7 @@ internal object WebRequestPolicy {
             remainder
         }
 
-        return Uri.parse("https://$TRUSTED_HOST/fortweb/vendor/pyodide/$BUNDLED_PYODIDE_VERSION/$file")
+        return Uri.parse("https://$TRUSTED_HOST/vendor/pyodide/$BUNDLED_PYODIDE_VERSION/$file")
     }
 }
 

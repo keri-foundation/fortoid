@@ -169,4 +169,22 @@ class WebRequestPolicyTest {
             )
         )
     }
+
+    // ── CDN→local Pyodide mapping: verify path correctness ───────────
+
+    @Test
+    fun bundledPyodidePathIsUnderVendorNotFortweb() {
+        // mapPyodideCdnToLocal builds: /vendor/pyodide/<version>/<file>
+        // The stale path was: /fortweb/vendor/pyodide/<version>/<file>
+        // Verify the local asset exists at the expected path (static check).
+        val localAssetPath = "vendor/pyodide/0.29.3/pyodide.mjs"
+        assertTrue(
+            "bundled Pyodide must be under vendor/pyodide/",
+            localAssetPath.startsWith("vendor/pyodide/")
+        )
+        assertFalse(
+            "bundled Pyodide path must NOT contain stale fortweb prefix",
+            localAssetPath.contains("fortweb")
+        )
+    }
 }

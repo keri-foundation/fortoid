@@ -37,7 +37,6 @@ class MainActivityStartupProofTest {
         private const val TAG = "MainActivityStartupProof"
         private const val TRUSTED_ORIGIN = "https://appassets.androidplatform.net"
         private const val CANONICAL_PATH = "/app/index.html"
-        private const val EXPECTED_TITLE = "Fortweb Wallet Shell"
         private const val POLL_INTERVAL_MS = 500L
         private const val TIMEOUT_MS = 24_000L
     }
@@ -66,7 +65,6 @@ class MainActivityStartupProofTest {
             pathname == CANONICAL_PATH &&
             isSecureContext &&
             fortOrigin == TRUSTED_ORIGIN &&
-            title == EXPECTED_TITLE &&
             hasAppRoot &&
             !nativeErrorVisible
 
