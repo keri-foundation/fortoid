@@ -21,8 +21,8 @@ internal object AndroidRuntimeOriginContract {
     private const val TRUSTED_ORIGIN = "https://appassets.androidplatform.net"
     private const val TRUSTED_APP_BASE = "https://appassets.androidplatform.net/app/"
     private const val TRUSTED_ENTRY_URL = "https://appassets.androidplatform.net/app/index.html"
-    private const val TRUSTED_WORKER_URL = "https://appassets.androidplatform.net/app/fortweb-worker.html"
-    private const val TRUSTED_CONFIG_URL = "https://appassets.androidplatform.net/app/runtime/package-config.json"
+    private const val TRUSTED_WORKER_URL = "https://appassets.androidplatform.net/app/runtime/wallet-worker.py"
+    private const val TRUSTED_CONFIG_URL = "https://appassets.androidplatform.net/pyscript-ci.toml"
 
     data class ValidatedContract(val jsonString: String) {
         val documentOrigin: String = TRUSTED_ORIGIN
