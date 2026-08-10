@@ -16,6 +16,7 @@ import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /** Phase A: Writes key/value to IndexedDB. Emits WRITE_PID via instrumentation Bundle. */
@@ -31,10 +32,6 @@ class PersistenceWriteTest {
         val args = InstrumentationRegistry.getArguments()
         val key = args.getString("persistenceKey") ?: error("persistenceKey required")
         val value = args.getString("persistenceValue") ?: error("persistenceValue required")
-        val pid = android.os.Process.myPid()
-
-        val resultBundle = android.os.Bundle()
-        resultBundle.putString("WRITE_PID", pid.toString())
 
         val instrCtx = InstrumentationRegistry.getInstrumentation().context
         val latch = CountDownLatch(1)
@@ -42,11 +39,13 @@ class PersistenceWriteTest {
         val pollingStarted = AtomicBoolean(false)
         val lastNativeStage = AtomicReference("WEBVIEW_NOT_CREATED")
         val lastProbeState = AtomicReference("(not polled)")
+        val targetPid = AtomicInteger(0)
 
         Log.i(TAG, "STAGE=TEST_STARTED key=$key")
 
         ActivityScenario.launch(PersistenceProbeActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
+                targetPid.compareAndSet(0, android.os.Process.myPid())
                 val wv = activity.webView
                 Log.i(TAG, "STAGE=WEBVIEW_OBTAINED")
                 lastNativeStage.set("WEBVIEW_OBTAINED")
@@ -141,6 +140,10 @@ class PersistenceWriteTest {
                 output.contains("\"immediateReadback\":\"ok\""))
 
             Log.i(TAG, "STAGE=WRITE_COMPLETE")
+            val pid = targetPid.get()
+            assertTrue("WRITE_PID must be positive, got: $pid", pid > 0)
+            val resultBundle = android.os.Bundle()
+            resultBundle.putString("WRITE_PID", pid.toString())
             InstrumentationRegistry.getInstrumentation().sendStatus(0, resultBundle)
         }
     }

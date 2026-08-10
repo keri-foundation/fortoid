@@ -13,6 +13,7 @@ import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Phase B: Reads persisted key/value from IndexedDB after force-stop. Emits READ_PID via instrumentation Bundle. */
 @RunWith(AndroidJUnit4::class)
@@ -22,18 +23,16 @@ class PersistenceReadTest {
         val args = InstrumentationRegistry.getArguments()
         val key = args.getString("persistenceKey") ?: error("persistenceKey required")
         val expectedValue = args.getString("persistenceValue") ?: error("persistenceValue required")
-        val pid = android.os.Process.myPid()
-
-        val resultBundle = android.os.Bundle()
-        resultBundle.putString("READ_PID", pid.toString())
 
         val instrCtx = InstrumentationRegistry.getInstrumentation().context
         val latch = CountDownLatch(1)
         var output = ""
         val pollingStarted = AtomicBoolean(false)
+        val targetPid = AtomicInteger(0)
 
         ActivityScenario.launch(PersistenceProbeActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
+                targetPid.compareAndSet(0, android.os.Process.myPid())
                 val wv = activity.webView
 
                 val loader = WebViewAssetLoader.Builder()
@@ -70,6 +69,10 @@ class PersistenceReadTest {
             assertTrue("isSecureContext must be true: $output",
                 output.contains("\"isSecureContext\":true"))
 
+            val pid = targetPid.get()
+            assertTrue("READ_PID must be positive, got: $pid", pid > 0)
+            val resultBundle = android.os.Bundle()
+            resultBundle.putString("READ_PID", pid.toString())
             InstrumentationRegistry.getInstrumentation().sendStatus(0, resultBundle)
         }
     }
