@@ -110,6 +110,9 @@ jobs:
           echo "value=$VALUE" >> $GITHUB_OUTPUT
           echo "KEY=$KEY VALUE=$VALUE"
 
+      - name: Clear logcat before write
+        run: adb logcat -c
+
       - name: Run PersistenceWriteTest
         id: write
         run: |
@@ -126,6 +129,16 @@ jobs:
           if ! [[ "$WRITE_PID" =~ ^[1-9][0-9]*$ ]]; then echo "FAIL: WRITE_PID is not a positive integer: $WRITE_PID"; exit 1; fi
           echo "write_pid=$WRITE_PID" >> $GITHUB_OUTPUT
           echo "Write PID: $WRITE_PID"
+
+      - name: Capture logcat on write failure
+        if: failure() && steps.write.outcome == 'failure'
+        run: |
+          echo "=== logcat (FortAndroidPersist) ==="
+          adb logcat -d -s FortAndroidPersist:* 2>/dev/null || echo "(no FortAndroidPersist logs)"
+          echo "=== logcat (chromium) ==="
+          adb logcat -d -s chromium:* 2>/dev/null | tail -50 || echo "(no chromium logs)"
+          echo "=== logcat (AndroidRuntime ERROR) ==="
+          adb logcat -d -s AndroidRuntime:E 2>/dev/null | tail -20 || echo "(no AndroidRuntime errors)"
 
       - name: Force-stop and verify exact PID absent
         run: |

@@ -1,22 +1,29 @@
 package org.kerifoundation.fortandroid
 
 import android.net.Uri
+import android.util.Log
+import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewAssetLoader
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /** Phase A: Writes key/value to IndexedDB. Emits WRITE_PID via instrumentation Bundle. */
 @RunWith(AndroidJUnit4::class)
 class PersistenceWriteTest {
+
+    companion object {
+        private const val TAG = "FortAndroidPersist"
+    }
+
     @Test
     fun writeValueToIndexedDB() {
         val args = InstrumentationRegistry.getArguments()
@@ -24,7 +31,6 @@ class PersistenceWriteTest {
         val value = args.getString("persistenceValue") ?: error("persistenceValue required")
         val pid = android.os.Process.myPid()
 
-        // Emit PID through instrumentation result Bundle for reliable CI parsing
         val resultBundle = android.os.Bundle()
         resultBundle.putString("WRITE_PID", pid.toString())
 
@@ -33,21 +39,27 @@ class PersistenceWriteTest {
         val latch = CountDownLatch(1)
         var output = ""
         val pollingStarted = AtomicBoolean(false)
+        val lastNativeStage = AtomicReference("WEBVIEW_NOT_CREATED")
+        val lastProbeState = AtomicReference("(not polled)")
+
+        Log.i(TAG, "STAGE=TEST_STARTED key=$key")
 
         android.os.Handler(targetCtx.mainLooper).post {
+            Log.i(TAG, "STAGE=WEBVIEW_CREATING")
+            lastNativeStage.set("WEBVIEW_CREATING")
             val wv = WebView(targetCtx)
             wv.settings.javaScriptEnabled = true
             wv.settings.domStorageEnabled = true
             wv.settings.allowFileAccess = false
             wv.settings.allowContentAccess = false
+            Log.i(TAG, "STAGE=WEBVIEW_CREATED")
+            lastNativeStage.set("WEBVIEW_CREATED")
 
-            // Use instrumentation context for androidTest probe assets
             val loader = WebViewAssetLoader.Builder()
                 .addPathHandler("/", TestAssetPathHandler(WebViewAssetLoader.AssetsPathHandler(instrCtx)))
                 .setDomain("appassets.androidplatform.net")
                 .setHttpAllowed(true).build()
 
-            // Build final URL with encoded params before first loadUrl (one navigation)
             val finalUrl = Uri.parse("https://appassets.androidplatform.net/persistence-probe/write.html")
                 .buildUpon()
                 .appendQueryParameter("key", key)
@@ -56,19 +68,75 @@ class PersistenceWriteTest {
                 .toString()
 
             wv.webViewClient = object : androidx.webkit.WebViewClientCompat() {
-                override fun shouldInterceptRequest(v: WebView, r: android.webkit.WebResourceRequest) =
-                    loader.shouldInterceptRequest(r.url)
+                override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
+                    val url = r.url.toString()
+                    val isMain = r.isForMainFrame
+                    val response = loader.shouldInterceptRequest(r.url)
+                    if (isMain) {
+                        val intercepted = response != null
+                        Log.i(TAG, "STAGE=MAIN_RESOURCE_INTERCEPTED url=$url intercepted=$intercepted")
+                        lastNativeStage.set(
+                            if (intercepted) "MAIN_RESOURCE_INTERCEPTED"
+                            else "MAIN_RESOURCE_NOT_INTERCEPTED"
+                        )
+                    }
+                    return response
+                }
+
+                override fun onPageStarted(v: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                    Log.i(TAG, "STAGE=PAGE_STARTED url=$url")
+                    lastNativeStage.set("PAGE_STARTED")
+                }
+
                 override fun onPageFinished(v: WebView, url: String?) {
-                    // Start polling only; never trigger another navigation.
-                    // Guard against duplicate callbacks (redirects, etc.)
+                    Log.i(TAG, "STAGE=PAGE_FINISHED url=$url")
+                    lastNativeStage.set("PAGE_FINISHED")
                     if (pollingStarted.compareAndSet(false, true)) {
-                        poll(v, latch) { r -> output = r }
+                        Log.i(TAG, "STAGE=POLLING_STARTED")
+                        lastNativeStage.set("POLLING_STARTED")
+                        poll(v, latch, lastNativeStage, lastProbeState) { r -> output = r }
+                    }
+                }
+
+                @Suppress("DEPRECATION")
+                override fun onReceivedError(
+                    v: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError
+                ) {
+                    val isMain = request.isForMainFrame
+                    Log.e(TAG, "STAGE=RECEIVED_ERROR mainFrame=$isMain url=${request.url} code=${error.errorCode} desc=${error.description}")
+                    if (isMain) {
+                        lastNativeStage.set("RECEIVED_ERROR:${error.errorCode}")
+                    }
+                }
+
+                override fun onReceivedHttpError(
+                    v: WebView, request: WebResourceRequest, response: WebResourceResponse
+                ) {
+                    val isMain = request.isForMainFrame
+                    Log.e(TAG, "STAGE=RECEIVED_HTTP_ERROR mainFrame=$isMain url=${request.url} status=${response.statusCode}")
+                    if (isMain) {
+                        lastNativeStage.set("RECEIVED_HTTP_ERROR:${response.statusCode}")
                     }
                 }
             }
+
+            Log.i(TAG, "STAGE=NAVIGATION_REQUESTED url=$finalUrl")
+            lastNativeStage.set("NAVIGATION_REQUESTED")
             wv.loadUrl(finalUrl)
         }
-        assertTrue("write timed out", latch.await(20, TimeUnit.SECONDS))
+
+        val timedOut = !latch.await(20, TimeUnit.SECONDS)
+        if (timedOut) {
+            val native = lastNativeStage.get()
+            val probe = lastProbeState.get()
+            Log.e(TAG, "STAGE=TIMEOUT lastNativeStage=$native lastProbeState=$probe")
+            // Report exactly where execution stopped
+            assertTrue(
+                "write timed out — last native stage: $native, last probe state: $probe",
+                false
+            )
+        }
+
         assertTrue("write must succeed: $output", output.contains("\"state\":\"done\""))
 
         // Verify origin and secure context
@@ -81,15 +149,35 @@ class PersistenceWriteTest {
         assertTrue("write must confirm immediate readback: $output",
             output.contains("\"immediateReadback\":\"ok\""))
 
-        // Send PID through instrumentation result
+        Log.i(TAG, "STAGE=WRITE_COMPLETE")
         InstrumentationRegistry.getInstrumentation().sendStatus(0, resultBundle)
     }
 
-    private fun poll(v: WebView, l: CountDownLatch, done: (String) -> Unit) {
+    private fun poll(
+        v: WebView, l: CountDownLatch,
+        nativeStage: AtomicReference<String>,
+        probeState: AtomicReference<String>,
+        done: (String) -> Unit
+    ) {
         v.evaluateJavascript("JSON.stringify(window.__probeResult||{state:'unknown'})") { j ->
             val t = j?.trim('"')?.replace("\\\"", "\"") ?: "{}"
-            try { if (org.json.JSONObject(t).optString("state") in listOf("done","error")) { done(t); l.countDown() } else v.postDelayed({ poll(v,l,done) },300) }
-            catch (_: Exception) { v.postDelayed({ poll(v,l,done) },300) }
+            try {
+                val obj = org.json.JSONObject(t)
+                val state = obj.optString("state", "unknown")
+                val stage = obj.optString("stage", "")
+                probeState.set("state=$state stage=$stage")
+                Log.d(TAG, "STAGE=JAVASCRIPT_RESPONDED state=$state stage=$stage")
+                if (state == "done" || state == "error") {
+                    Log.i(TAG, "STAGE=PROBE_TERMINAL state=$state")
+                    nativeStage.set(if (state == "done") "PROBE_DONE" else "PROBE_ERROR")
+                    done(t)
+                    l.countDown()
+                } else {
+                    v.postDelayed({ poll(v, l, nativeStage, probeState, done) }, 300)
+                }
+            } catch (_: Exception) {
+                v.postDelayed({ poll(v, l, nativeStage, probeState, done) }, 300)
+            }
         }
     }
 }
