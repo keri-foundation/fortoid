@@ -1,0 +1,145 @@
+name: Android API 36 Startup Proof
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: android-startup-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  startup-proof:
+    name: Android API 36 production startup proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out Fortoid
+        uses: actions/checkout@v4
+
+      - name: Check out FortWeb
+        uses: actions/checkout@v4
+        with:
+          repository: keri-foundation/fortweb
+          ref: 84f76995cbf25a8432d422776ca34f863b0f99ac
+          path: .deps/fortweb
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install FortWeb dependencies
+        run: npm ci
+        working-directory: .deps/fortweb
+
+      - name: Build FortWeb runtime
+        run: npm run build:runtime
+        working-directory: .deps/fortweb
+
+      - name: Generate FortWeb runtime package ZIP
+        run: node tools/package-runtime.mjs
+        working-directory: .deps/fortweb
+
+      - name: Import runtime package
+        run: |
+          ZIP=$(ls .deps/fortweb/.tmp/runtime-packages/*.zip | head -1)
+          node tools/import-fortweb-runtime-package.mjs "$ZIP"
+
+      - name: Validate staged payload
+        run: node tools/validate-staged-payload.mjs
+
+      - name: Verify staged payload (exact inventory, digests, bytes)
+        run: node tools/verify-packaged-runtime.mjs app/src/main/assets/payload
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm || echo "KVM not available"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+
+      - name: Install system image and create AVD
+        run: |
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
+          mkdir -p "$ANDROID_AVD_HOME"
+          if ! avdmanager list device | grep -q 'id:.*pixel_8'; then
+            echo "FAIL: pixel_8 not found in device catalog"
+            avdmanager list device
+            exit 1
+          fi
+          echo "y" | sdkmanager "system-images;android-36;google_apis;x86_64"
+          echo "no" | avdmanager create avd \
+            --name "startup-test" \
+            --package "system-images;android-36;google_apis;x86_64" \
+            --device "pixel_8" \
+            --force
+          $ANDROID_HOME/emulator/emulator -list-avds
+
+      - name: Start emulator
+        timeout-minutes: 8
+        run: |
+          $ANDROID_HOME/emulator/emulator \
+            -avd startup-test \
+            -no-window -no-audio -no-boot-anim \
+            -gpu swiftshader_indirect \
+            -read-only -delay-adb \
+            &
+          adb wait-for-device
+          adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+          adb shell input keyevent 82
+          echo "Emulator ready"
+
+      - name: Verify API 36 WebView baseline
+        run: |
+          SDK=$(adb shell getprop ro.build.version.sdk)
+          if [ "$SDK" != "36" ]; then echo "FAIL: expected SDK 36, got $SDK"; exit 1; fi
+          echo "SDK: $SDK — OK"
+
+      - name: Build and install APKs
+        run: |
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+          adb install -r app/build/outputs/apk/debug/app-debug.apk
+          adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+
+      - name: Run MainActivity startup proof
+        run: |
+          adb shell am instrument -w -r \
+            -e class org.kerifoundation.fortandroid.MainActivityStartupProofTest \
+            org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner
+
+      - name: Verify startup JUnit XML
+        if: always()
+        run: |
+          python3 tools/verify-junit-suite.py \
+            --results-dir app/build/outputs/androidTest-results/connected \
+            --suite org.kerifoundation.fortandroid.MainActivityStartupProofTest \
+            --tests 1
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: startup-proof-reports
+          path: app/build/outputs/androidTest-results/
+          retention-days: 7

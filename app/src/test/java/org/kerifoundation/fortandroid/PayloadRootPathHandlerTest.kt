@@ -42,7 +42,7 @@ class PayloadRootPathHandlerTest {
         val result = handler.handle("/")
         assertNull("delegate returns null → handler returns null", result)
         assertEquals("must request exactly one delegate path", 1, delegate.requestedPaths.size)
-        assertEquals("payload/index.html", delegate.requestedPaths[0])
+        assertEquals("payload/app/index.html", delegate.requestedPaths[0])
     }
 
     @Test
@@ -51,7 +51,7 @@ class PayloadRootPathHandlerTest {
         val handler = MainActivity.PayloadRootPathHandler(delegate)
         handler.handle("")
         assertEquals(1, delegate.requestedPaths.size)
-        assertEquals("payload/index.html", delegate.requestedPaths[0])
+        assertEquals("payload/app/index.html", delegate.requestedPaths[0])
     }
 
     @Test

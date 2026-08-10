@@ -1,0 +1,23 @@
+{
+  "schema": "fortweb.runtime-origin.v1",
+  "version": 1,
+  "platform": "android-webview",
+  "mode": "bundled-offline",
+  "documentOrigin": "https://appassets.androidplatform.net",
+  "appBaseUrl": "https://appassets.androidplatform.net/app/",
+  "entryUrl": "https://appassets.androidplatform.net/app/index.html",
+  "workerUrl": "https://appassets.androidplatform.net/app/fortweb-worker.html",
+  "configUrl": "https://appassets.androidplatform.net/app/runtime/package-config.json",
+  "storage": {
+    "storageNamespace": "fortoid",
+    "indexedDbRequired": true,
+    "originPartition": "https://appassets.androidplatform.net"
+  },
+  "capabilities": {
+    "customScheme": false,
+    "httpsLikeAssetOrigin": true,
+    "implicitBlobOriginSafe": false,
+    "networkAllowed": false,
+    "bundledAssetsOnly": true
+  }
+}
