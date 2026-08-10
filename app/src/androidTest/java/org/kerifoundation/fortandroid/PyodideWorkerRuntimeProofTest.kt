@@ -9,6 +9,9 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebMessageCompat
+import androidx.webkit.JavaScriptReplyProxy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -16,8 +19,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.kerifoundation.fort.bridge.BridgeContract
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -28,6 +33,8 @@ import java.util.concurrent.atomic.AtomicReference
  * Routes both androidTest probe assets and target payload assets through
  * a composite WebViewAssetLoader under the trusted origin.
  *
+ * Observes producer lifecycle independently via the native bridge contract.
+ *
  * Evidence classification: FORTWEB-PYODIDE-WORKER
  */
 @RunWith(AndroidJUnit4::class)
@@ -36,7 +43,8 @@ class PyodideWorkerRuntimeProofTest {
     companion object {
         private const val TAG = "PyodideWorkerProof"
         private const val TRUSTED_ORIGIN = "https://appassets.androidplatform.net"
-        private const val TIMEOUT_MS = 210_000L // 3.5 min for Pyodide boot + preload
+        private const val PYODIDE_TIMEOUT_MS = 210_000L
+        private const val PROBE_INIT_TIMEOUT_MS = 15_000L
     }
 
     private lateinit var scenario: ActivityScenario<WorkerProbeActivity>
@@ -51,7 +59,6 @@ class PyodideWorkerRuntimeProofTest {
         val stage: String,
         val origin: String,
         val isSecureContext: Boolean,
-        val preloadComplete: Boolean,
         val storageBackend: String?,
         val keyAlgorithm: String?,
         val keyTier: String?,
@@ -59,21 +66,37 @@ class PyodideWorkerRuntimeProofTest {
         val message: String?
     )
 
+    data class NativeEvent(
+        val type: String,
+        val state: String?,
+        val message: String?
+    )
+
     @Test
     fun producerWorkerBootsAndRespondsToSettingsRequest() {
         val instrCtx = InstrumentationRegistry.getInstrumentation().context
         val targetCtx = InstrumentationRegistry.getInstrumentation().targetContext
-        val lastObservation = AtomicReference<WorkerObservation>()
 
-        val deadline = SystemClock.elapsedRealtime() + TIMEOUT_MS
+        val lastObservation = AtomicReference<WorkerObservation>()
+        val preloadComplete = AtomicBoolean(false)
+        val preloadFailed = AtomicBoolean(false)
+        val preloadFailedReason = AtomicReference<String>()
+        val mainResourceError = AtomicReference<String>()
+        val pageFinished = AtomicBoolean(false)
+
+        // Native bridge listener for producer diagnostics
+        val nativeEvents = mutableListOf<NativeEvent>()
+
+        val deadline = SystemClock.elapsedRealtime() + PYODIDE_TIMEOUT_MS
 
         scenario = ActivityScenario.launch(WorkerProbeActivity::class.java)
         scenario.onActivity { activity ->
             val wv = activity.webView
 
-            // Composite loader: probe assets from androidTest, payload from target app
-            val probeHandler = TestAssetPathHandler(
-                WebViewAssetLoader.AssetsPathHandler(instrCtx)
+            // Prefix-aware probe handler — WebViewAssetLoader strips the prefix
+            val probeHandler = PrefixingTestAssetPathHandler(
+                WebViewAssetLoader.AssetsPathHandler(instrCtx),
+                "android-pyodide-worker-probe/"
             )
             val payloadHandler = MainActivity.PayloadRootPathHandler(
                 WebViewAssetLoader.AssetsPathHandler(targetCtx)
@@ -81,21 +104,69 @@ class PyodideWorkerRuntimeProofTest {
 
             val loader = WebViewAssetLoader.Builder()
                 .addPathHandler("/android-pyodide-worker-probe/", probeHandler)
-                .addPathHandler("/android/", object : WebViewAssetLoader.PathHandler {
-                    override fun handle(path: String): WebResourceResponse? {
-                        return WebViewAssetLoader.AssetsPathHandler(targetCtx).handle(path)
-                    }
-                })
+                .addPathHandler("/android/", WebViewAssetLoader.AssetsPathHandler(targetCtx))
                 .addPathHandler("/", payloadHandler)
                 .setDomain("appassets.androidplatform.net")
                 .setHttpAllowed(true)
                 .build()
 
+            // ── Native bridge listener for producer diagnostics ──────
+            WebViewCompat.addWebMessageListener(wv, BridgeContract.HANDLER_NAME, setOf(TRUSTED_ORIGIN),
+                object : WebViewCompat.WebMessageListener {
+                    override fun onPostMessage(view: WebView, message: WebMessageCompat, sourceOrigin: android.net.Uri, isMainFrame: Boolean, replyProxy: JavaScriptReplyProxy) {
+                        if (!isMainFrame) return
+                        val rawPayload = message.data ?: return
+                        val bounded: String = if (rawPayload.length > 4096) rawPayload.substring(0, 4096) else rawPayload
+                try {
+                    val obj = org.json.JSONObject(bounded)
+                    val type: String = obj.getString("type")
+                    val msg: String = obj.getString("message")
+                    Log.i(TAG, "NATIVE_EVENT type=$type msg=${msg.take(200)}")
+                    synchronized(nativeEvents) {
+                        nativeEvents.add(NativeEvent(type, if (obj.has("state")) obj.getString("state") else null, msg))
+                    }
+                    if (msg.contains("worker_preload_complete")) {
+                        preloadComplete.set(true)
+                        Log.i(TAG, "STAGE=PRELOAD_COMPLETE")
+                    }
+                    if (msg.contains("worker_preload_failed")) {
+                        preloadFailed.set(true)
+                        preloadFailedReason.set(msg)
+                        Log.e(TAG, "STAGE=PRELOAD_FAILED reason=$msg")
+                    }
+                } catch (_: Exception) { /* skip unparseable */ }
+                    }
+                }
+            )
+
             wv.webViewClient = object : androidx.webkit.WebViewClientCompat() {
-                override fun shouldInterceptRequest(
-                    view: WebView, request: WebResourceRequest
-                ): WebResourceResponse? {
-                    return loader.shouldInterceptRequest(request.url)
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    val url = request.url.toString()
+                    val response = loader.shouldInterceptRequest(request.url)
+                    if (request.isForMainFrame) {
+                        Log.i(TAG, "STAGE=MAIN_RESOURCE_INTERCEPTED url=$url intercepted=${response != null}")
+                    }
+                    // Log key resources
+                    if (url.contains("bridge.js") || url.contains("wallet-worker") || url.contains("pyscript")) {
+                        Log.i(TAG, "RESOURCE url=$url intercepted=${response != null}")
+                    }
+                    return response
+                }
+
+                override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                    Log.i(TAG, "STAGE=PAGE_STARTED url=$url")
+                }
+
+                override fun onPageFinished(view: WebView, url: String?) {
+                    Log.i(TAG, "STAGE=PAGE_FINISHED url=$url")
+                    pageFinished.set(true)
+                }
+
+                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: androidx.webkit.WebResourceErrorCompat) {
+                    Log.e(TAG, "STAGE=RECEIVED_ERROR mainFrame=${request.isForMainFrame} url=${request.url} code=${error.errorCode}")
+                    if (request.isForMainFrame) {
+                        mainResourceError.set("code=${error.errorCode} desc=${error.description}")
+                    }
                 }
             }
 
@@ -105,30 +176,32 @@ class PyodideWorkerRuntimeProofTest {
             contractStream.close()
             val contractJson = String(contractBytes, Charsets.UTF_8)
 
-            androidx.webkit.WebViewCompat.addDocumentStartJavaScript(
-                wv,
-                "window.__FORT_RUNTIME_ORIGIN__ = $contractJson;",
-                setOf(TRUSTED_ORIGIN)
-            )
+            WebViewCompat.addDocumentStartJavaScript(wv, "window.__FORT_RUNTIME_ORIGIN__ = $contractJson;", setOf(TRUSTED_ORIGIN))
 
+            Log.i(TAG, "STAGE=NAVIGATION_REQUESTED")
             wv.loadUrl("$TRUSTED_ORIGIN/android-pyodide-worker-probe/index.html")
         }
 
-        // Poll for result on the test thread
+        // ── Polling loop ────────────────────────────────────────────
+
         while (SystemClock.elapsedRealtime() < deadline) {
+            // Fail fast on main resource error
+            val mre = mainResourceError.get()
+            if (mre != null) fail("Main resource error: $mre")
+
+            // Fail fast on preload failure
+            if (preloadFailed.get()) {
+                fail("Worker preload failed: ${preloadFailedReason.get()}")
+            }
+
             val sampleLatch = CountDownLatch(1)
             val sample = AtomicReference<WorkerObservation>()
 
             scenario.onActivity { activity ->
-                val wv = activity.webView
-                wv.evaluateJavascript(
+                activity.webView.evaluateJavascript(
                     "JSON.stringify(window.__pyodideWorkerResult || {state:'loading'})"
                 ) { raw ->
-                    val obs = parseWorkerResult(raw)
-                    sample.set(obs)
-                    if (obs.state == "done" || obs.state == "error") {
-                        Log.i(TAG, "STAGE=${obs.state} stage=${obs.stage}")
-                    }
+                    sample.set(parseWorkerResult(raw))
                     sampleLatch.countDown()
                 }
             }
@@ -137,20 +210,30 @@ class PyodideWorkerRuntimeProofTest {
             val obs = sample.get() ?: continue
             lastObservation.set(obs)
 
-            if (obs.state == "done") {
-                // All assertions against one coherent observation
-                assertEquals("must be trusted origin", TRUSTED_ORIGIN, obs.origin)
-                assertTrue("must be secure context", obs.isSecureContext)
-                assertTrue("preload must be complete", obs.preloadComplete)
-                assertNotNull("storageBackend must be present", obs.storageBackend)
-                assertNotNull("keyAlgorithm must be present", obs.keyAlgorithm)
-                assertNotNull("keyTier must be present", obs.keyTier)
-                Log.i(TAG, "STAGE=READY storage=$obs.storageBackend algo=$obs.keyAlgorithm tier=$obs.keyTier")
-                return
+            // Fail fast if probe page loaded but script never initialized
+            if (pageFinished.get() && SystemClock.elapsedRealtime() > SystemClock.elapsedRealtime() - deadline + PROBE_INIT_TIMEOUT_MS) {
+                if (obs.stage == "unknown" && obs.state == "loading") {
+                    fail("PROBE_SCRIPT_NOT_INITIALIZED: page loaded but probe global never appeared")
+                }
             }
 
             if (obs.state == "error") {
                 fail("Worker proof failed: category=${obs.category} message=${obs.message} stage=${obs.stage}")
+            }
+
+            if (obs.state == "done") {
+                // Require native preload evidence independently
+                if (!preloadComplete.get()) {
+                    fail("Probe reported done but preload_complete not observed via native bridge")
+                }
+
+                assertEquals("must be trusted origin", TRUSTED_ORIGIN, obs.origin)
+                assertTrue("must be secure context", obs.isSecureContext)
+                assertEquals("storageBackend", "Browser IndexedDB via WebBaser and WebKeeper", obs.storageBackend)
+                assertEquals("keyAlgorithm", "salty", obs.keyAlgorithm)
+                assertEquals("keyTier", "low", obs.keyTier)
+                Log.i(TAG, "STAGE=READY")
+                return
             }
 
             Thread.sleep(2000)
@@ -161,7 +244,7 @@ class PyodideWorkerRuntimeProofTest {
     }
 
     private fun parseWorkerResult(raw: String?): WorkerObservation {
-        if (raw == null) return WorkerObservation("loading", "no_response", "", false, false, null, null, null, null, null)
+        if (raw == null) return WorkerObservation("loading", "no_response", "", false, null, null, null, null, null)
         val unquoted = raw.trim()
             .removeSurrounding("\"")
             .replace("\\\"", "\"")
@@ -173,7 +256,6 @@ class PyodideWorkerRuntimeProofTest {
                 stage = obj.optString("stage", "unknown"),
                 origin = obj.optString("origin", ""),
                 isSecureContext = obj.optBoolean("isSecureContext", false),
-                preloadComplete = obj.optBoolean("preloadComplete", false),
                 storageBackend = obj.optString("storageBackend", "").takeIf { it.isNotEmpty() },
                 keyAlgorithm = obj.optString("keyAlgorithm", "").takeIf { it.isNotEmpty() },
                 keyTier = obj.optString("keyTier", "").takeIf { it.isNotEmpty() },
@@ -181,7 +263,31 @@ class PyodideWorkerRuntimeProofTest {
                 message = obj.optString("message", "").takeIf { it.isNotEmpty() }
             )
         } catch (_: Exception) {
-            WorkerObservation("loading", "parse_error", "", false, false, null, null, null, null, null)
+            WorkerObservation("loading", "parse_error", "", false, null, null, null, null, null)
         }
+    }
+}
+
+/**
+ * PathHandler that re-adds the asset prefix stripped by WebViewAssetLoader.
+ *
+ * WebViewAssetLoader strips the registered URL prefix before calling the
+ * handler, so a request for /prefix/index.html reaches us as "index.html".
+ * This wrapper prepends the asset directory prefix so the underlying
+ * AssetsPathHandler can find the file at prefix/index.html.
+ */
+class PrefixingTestAssetPathHandler(
+    private val delegate: WebViewAssetLoader.PathHandler,
+    private val assetPrefix: String
+) : WebViewAssetLoader.PathHandler {
+    override fun handle(path: String): WebResourceResponse? {
+        val response = delegate.handle(assetPrefix + path) ?: return null
+        // Apply production-equivalent COOP/COEP/CORP headers
+        val headers = response.responseHeaders?.toMutableMap() ?: mutableMapOf()
+        headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+        headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        response.responseHeaders = headers
+        return response
     }
 }

@@ -2,80 +2,70 @@
 <meta charset="utf-8">
 <title>Pyodide Worker Probe</title>
 <script type="module">
-// Report results through a pollable global
+// Report results through a pollable global.
+// Every stage transition is preserved for diagnostics.
 window.__pyodideWorkerResult = { state: "loading", stage: "probe_started" };
 
 function setStage(s) { window.__pyodideWorkerResult.stage = s; }
 function fail(category, message) {
-    window.__pyodideWorkerResult = { state: "error", category, message };
+    window.__pyodideWorkerResult = {
+        state: "error", category, message,
+        stage: window.__pyodideWorkerResult.stage  // preserve last stage
+    };
 }
 
+(async function run() {
 try {
     setStage("importing_bridge");
-    const { createRuntimeBridge } = await import("./app/runtime/bridge.js");
+    const bridgeModule = await import("/app/runtime/bridge.js");
+    setStage("bridge_imported");
+
+    if (!bridgeModule.createRuntimeBridge) {
+        fail("BRIDGE_API_MISSING", "createRuntimeBridge not exported");
+        return;
+    }
 
     const originContract = window.__FORT_RUNTIME_ORIGIN__;
     if (!originContract || !originContract.documentOrigin) {
         fail("ORIGIN_CONTRACT_MISSING", "__FORT_RUNTIME_ORIGIN__ not available");
-        throw new Error("origin contract missing");
+        return;
     }
+    setStage("origin_contract_validated");
 
     setStage("creating_bridge");
-    const bridge = createRuntimeBridge({
+    const bridge = bridgeModule.createRuntimeBridge({
         workerUrl: originContract.workerUrl,
         configUrl: originContract.configUrl,
         runtimeOriginContract: originContract,
     });
+    setStage("bridge_created");
 
-    // Observe producer bridge messages
-    const seenPreloadComplete = { value: false };
-    const seenPreloadFailed = { value: false };
-    const settingsResult = { value: null };
+    setStage("requesting_settings");
+    const response = await bridge.request("settings.get", {});
+    setStage("settings_received");
 
-    bridge.logBus.on("*", (event) => {
-        if (event.type === "worker_preload_complete") {
-            seenPreloadComplete.value = true;
-            setStage("preload_complete");
-            requestSettings();
-        }
-        if (event.type === "worker_preload_failed") {
-            seenPreloadFailed.value = true;
-            fail("WORKER_PRELOAD_FAILED", event.message || "preload failed");
-        }
-    });
+    const storage = response?.settings?.storageBackend || "(unknown)";
+    const algo = response?.settings?.keyAlgorithm || "(unknown)";
+    const tier = response?.settings?.keyTier || "(unknown)";
 
-    async function requestSettings() {
-        try {
-            setStage("requesting_settings");
-            const response = await bridge.request("settings.get", {});
-            settingsResult.value = response;
-
-            const storage = response?.settings?.storageBackend || "(unknown)";
-            const algo = response?.settings?.keyAlgorithm || "(unknown)";
-            const tier = response?.settings?.keyTier || "(unknown)";
-
-            window.__pyodideWorkerResult = {
-                state: "done",
-                stage: "settings_received",
-                preloadComplete: seenPreloadComplete.value,
-                storageBackend: storage,
-                keyAlgorithm: algo,
-                keyTier: tier,
-                origin: location.origin,
-                isSecureContext: window.isSecureContext || false,
-            };
-        } catch (e) {
-            fail("SETTINGS_REQUEST_FAILED", e.message || String(e));
-        }
-    }
-
-    // Timeout safety
-    setTimeout(() => {
-        if (window.__pyodideWorkerResult.state === "loading") {
-            fail("TIMEOUT", "probe did not complete within timeout");
-        }
-    }, 180000); // 3 minutes for Pyodide boot
+    window.__pyodideWorkerResult = {
+        state: "done",
+        stage: "settings_received",
+        storageBackend: storage,
+        keyAlgorithm: algo,
+        keyTier: tier,
+        origin: location.origin,
+        isSecureContext: window.isSecureContext || false,
+    };
 } catch (e) {
     fail("PROBE_ERROR", e.message || String(e));
 }
+})();
+
+// Safety timeout: fail if probe never reaches terminal state
+setTimeout(() => {
+    if (window.__pyodideWorkerResult.state === "loading") {
+        fail("TIMEOUT", "probe did not complete within timeout");
+    }
+}, 180000);
 </script>
