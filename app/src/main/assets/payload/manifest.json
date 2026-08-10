@@ -4,10 +4,10 @@
   "package_name": "fortweb-runtime",
   "producer": "fortweb",
   "payload_profile": "offline-runtime",
-  "fortweb_commit_sha": "84f76995cbf25a8432d422776ca34f863b0f99ac",
+  "fortweb_commit_sha": "709c2a2507267d181990b83629d315fe9206f524",
   "runtime_origin": "https://appassets.androidplatform.net",
   "entrypoint": "app/index.html",
-  "git_ref": "work/runtime-deployment-pipeline-20260608",
+  "git_ref": "HEAD",
   "base_path": "/fortweb/app/",
   "runtime_root": ".",
   "vendor_root": "vendor",
@@ -379,8 +379,8 @@
     },
     {
       "path": "app/runtime/wallet-worker.py",
-      "sha256": "fbb13ba1b5cd7e00dc3cb9b95c377d25451a7f843083a39472f361958cf9cb04",
-      "bytes": 91362
+      "sha256": "56ddb7069eab5a10fb428b7ef4e64da59851b06330e0e08df67b14a05f5b651e",
+      "bytes": 91394
     },
     {
       "path": "app/shared/components.js",

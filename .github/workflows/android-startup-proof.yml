@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: keri-foundation/fortweb
-          ref: 84f76995cbf25a8432d422776ca34f863b0f99ac
+          ref: 709c2a2507267d181990b83629d315fe9206f524
           path: .deps/fortweb
 
       - name: Set up Node
