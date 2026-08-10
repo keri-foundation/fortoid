@@ -7,6 +7,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.webkit.WebResourceErrorCompat
 import androidx.webkit.WebViewAssetLoader
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -98,9 +99,8 @@ class PersistenceWriteTest {
                     }
                 }
 
-                @Suppress("DEPRECATION")
                 override fun onReceivedError(
-                    v: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError
+                    v: WebView, request: WebResourceRequest, error: WebResourceErrorCompat
                 ) {
                     val isMain = request.isForMainFrame
                     Log.e(TAG, "STAGE=RECEIVED_ERROR mainFrame=$isMain url=${request.url} code=${error.errorCode} desc=${error.description}")
