@@ -33,7 +33,10 @@ import xml.etree.ElementTree as ET
 
 
 def find_suites(results_dir: str, target_name: str):
-    """Find all matching suites. Returns list of (filepath, suite_element)."""
+    """Find all matching suites. Returns list of (filepath, suite_element).
+
+    Supports both root-<testsuite> and <testsuites><testsuite/> layouts.
+    """
     xml_files = glob.glob(os.path.join(results_dir, "**", "TEST-*.xml"), recursive=True)
     if not xml_files:
         return []
@@ -45,9 +48,16 @@ def find_suites(results_dir: str, target_name: str):
             root = tree.getroot()
         except ET.ParseError:
             continue
-        name = root.get("name", "")
-        if name == target_name:
-            matches.append((fp, root, tree))
+
+        # Support both <testsuite> root and <testsuites><testsuite/></testsuites>
+        if root.tag == "testsuite":
+            if root.get("name", "") == target_name:
+                matches.append((fp, root, tree))
+        elif root.tag == "testsuites":
+            for child in root:
+                if child.tag == "testsuite" and child.get("name", "") == target_name:
+                    matches.append((fp, child, tree))
+
     return matches
 
 

@@ -1,9 +1,6 @@
 package org.kerifoundation.fortandroid
 
-import android.app.Activity
-import android.os.Bundle
 import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -13,10 +10,8 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.ByteArrayInputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -29,40 +24,6 @@ import java.util.concurrent.TimeUnit
  *   a message round-trip.
  * — does NOT prove Pyodide worker execution.
  */
-
-/** Minimal test-only Activity hosting a single WebView. */
-class WorkerProbeActivity : Activity() {
-    lateinit var webView: WebView
-        private set
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        webView = WebView(this)
-        configureRuntimeSettings(webView.settings)
-        setContentView(webView)
-    }
-
-    override fun onDestroy() {
-        webView.destroy()
-        super.onDestroy()
-    }
-}
-
-// ── Production-equivalent configuration (no MainActivity refactor) ────────
-
-/** Apply the same WebSettings used in production MainActivity. */
-fun configureRuntimeSettings(settings: WebSettings) {
-    settings.javaScriptEnabled = true
-    settings.domStorageEnabled = true
-    settings.allowFileAccess = false
-    settings.allowContentAccess = false
-    settings.allowFileAccessFromFileURLs = false
-    settings.allowUniversalAccessFromFileURLs = false
-    settings.javaScriptCanOpenWindowsAutomatically = false
-    settings.mediaPlaybackRequiresUserGesture = true
-    settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-    settings.setSupportMultipleWindows(false)
-}
 
 /** Reproduce production COOP/COEP/CORP headers. */
 fun addProductionSecurityHeaders(response: WebResourceResponse): WebResourceResponse {
@@ -178,12 +139,11 @@ class WorkerRuntimeProofTest {
 
         val result = resultHolder[0]!!
         assertEquals("done", result["state"])
-        @Suppress("UNCHECKED_CAST")
-        val reply = result["reply"] as? Map<String, Any?>
+        val reply = result["reply"] as? org.json.JSONObject
         assertNotNull("worker must send a reply", reply)
-        assertEquals("pong", reply?.get("type"))
-        assertEquals("https://appassets.androidplatform.net", reply?.get("origin"))
-        assertEquals(true, reply?.get("isSecureContext"))
+        assertEquals("pong", reply?.optString("type"))
+        assertEquals("https://appassets.androidplatform.net", reply?.optString("origin"))
+        assertEquals(true, reply?.optBoolean("isSecureContext"))
     }
 
     @Test
@@ -203,9 +163,9 @@ class WorkerRuntimeProofTest {
         assertEquals("error", result["state"])
         val category = result["category"] as? String
         assertNotNull("error must have a category", category)
-        assertTrue(
-            "category must indicate script load or constructor failure, got: $category",
-            category == "WORKER_SCRIPT_LOAD_FAILURE" || category == "WORKER_CONSTRUCTOR_FAILURE"
+        assertEquals(
+            "category must be WORKER_SCRIPT_LOAD_FAILURE, got: $category",
+            "WORKER_SCRIPT_LOAD_FAILURE", category
         )
     }
 }
