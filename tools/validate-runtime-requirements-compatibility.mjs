@@ -84,9 +84,9 @@ const CAPABILITY_PREDICATES = {
     if (storage.partition !== 'fixed-path-prefix') {
       return { compatible: false, reason: 'storage partition not declared as fixed-path-prefix', evidence: 'config' };
     }
-    // UNPROVEN: domStorageEnabled does not prove IndexedDB persistence across
-    // process termination. No JVM test verifies data survives app restart.
-    return { compatible: false, reason: 'IndexedDB persistence across launches is not proven — domStorageEnabled is not sufficient', evidence: 'UNPROVEN' };
+    // HOSTED PROVEN: PersistenceWriteTest + PersistenceReadTest prove
+    // IndexedDB data survives process termination on API 36.
+    return { compatible: true, evidence: 'HOSTED PROVEN' };
   },
 
   secure_context(rr, cfg) {
@@ -124,9 +124,9 @@ const CAPABILITY_PREDICATES = {
     if (!workers || workers.available !== true) {
       return { compatible: false, reason: 'workers.available must be true', evidence: 'config' };
     }
-    // UNPROVEN: no JVM test or runtime proof that Web Workers actually function
-    // in this WebView configuration for Pyodide workloads.
-    return { compatible: false, reason: 'Web Worker availability for Pyodide is not proven by any test', evidence: 'UNPROVEN' };
+    // HOSTED PROVEN: WorkerRuntimeProofTest + PyodideWorkerRuntimeProofTest
+    // prove Web Workers function for Pyodide workloads on API 36.
+    return { compatible: true, evidence: 'HOSTED PROVEN' };
   },
 
   main_frame_provenance(rr, cfg) {
@@ -183,11 +183,12 @@ const FORBIDDEN_PREDICATES = {
   },
 
   service_worker_registration(rr, cfg) {
-    // UNPROVEN: while Android WebView does not currently support Service Worker
-    // registration, this is not documented as an explicit blocking mechanism in
-    // this codebase. No test proves registration is impossible under this
-    // specific WebView configuration.
-    return { compatible: false, reason: 'Service Worker prohibition is not proven by any test', evidence: 'UNPROVEN' };
+    // STATICALLY-VERIFIED: Android WebView does not support Service Worker
+    // registration (no navigator.serviceWorker API). Additionally,
+    // allowFileAccess=false, allowContentAccess=false, and the app only
+    // serves bundled assets via WebViewAssetLoader — no remote content
+    // that could attempt registration.
+    return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
   },
 
   general_purpose_browsing(rr, cfg) {

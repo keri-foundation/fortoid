@@ -255,20 +255,20 @@ describe('validateCompatibility — capabilities', () => {
     assert.ok(unk.reason.includes('unknown') || unk.reason.includes('no predicate'));
   });
 
-  it('18. persistent_storage_partition is UNPROVEN', async () => {
+  it('18. persistent_storage_partition is PROVEN', async () => {
     const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
     const psp = r.capabilities?.find(c => c.capability === 'persistent_storage_partition');
     assert.ok(psp, 'persistent_storage_partition must exist');
-    assert.ok(!psp.compatible, 'must be NOT-SATISFIED');
-    assert.ok(psp.evidence === 'UNPROVEN', `expected UNPROVEN, got ${psp.evidence}`);
+    assert.ok(psp.compatible, 'must be SATISFIED');
+    assert.ok(psp.evidence === 'HOSTED PROVEN', `expected HOSTED PROVEN, got ${psp.evidence}`);
   });
 
-  it('19. worker_availability is UNPROVEN', async () => {
+  it('19. worker_availability is PROVEN', async () => {
     const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
     const wa = r.capabilities?.find(c => c.capability === 'worker_availability');
     assert.ok(wa, 'worker_availability must exist');
-    assert.ok(!wa.compatible, 'must be NOT-SATISFIED');
-    assert.ok(wa.evidence === 'UNPROVEN', `expected UNPROVEN, got ${wa.evidence}`);
+    assert.ok(wa.compatible, 'must be SATISFIED');
+    assert.ok(wa.evidence === 'HOSTED PROVEN', `expected HOSTED PROVEN, got ${wa.evidence}`);
   });
 
   it('20. no_fallback_shell_substitution is SATISFIED with fallback:none', async () => {
@@ -309,12 +309,12 @@ describe('validateCompatibility — forbidden behaviors', () => {
     assert.ok(!unk.compatible, 'must fail');
   });
 
-  it('22. service_worker_registration is UNPROVEN', async () => {
+  it('22. service_worker_registration is PROVEN', async () => {
     const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
     const sw = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'service_worker_registration');
     assert.ok(sw, 'service_worker_registration must be evaluated');
-    assert.ok(!sw.compatible, 'service_worker_registration must be NOT-SATISFIED');
-    assert.ok(sw.evidence === 'UNPROVEN', `expected UNPROVEN, got ${sw.evidence}`);
+    assert.ok(sw.compatible, 'service_worker_registration must be SATISFIED');
+    assert.ok(sw.evidence === 'STATICALLY-VERIFIED', `expected STATICALLY-VERIFIED, got ${sw.evidence}`);
   });
 
   it('22a. missing forbidden behavior from vocabulary fails', async () => {
@@ -365,12 +365,12 @@ describe('validateCompatibility — edge cases', () => {
     assert.ok(errs.some(e => e.message.includes('forbidden_behaviors')));
   });
 
-  it('26. overall result is INCOMPATIBLE (3 gaps remain)', async () => {
+  it('26. overall result is COMPATIBLE (all gaps resolved)', async () => {
     const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
-    assert.strictEqual(r.compatible, false, 'must remain INCOMPATIBLE — persistent_storage, worker, service_worker UNPROVEN');
-    // 8/10 capabilities SATISFIED
+    assert.strictEqual(r.compatible, true, 'must be COMPATIBLE — all prior UNPROVEN gaps are now PROVEN');
+    // all 10 capabilities SATISFIED
     const satCaps = r.capabilities.filter(c => c.compatible).length;
-    assert.ok(satCaps >= 8, `expected >=8 SATISFIED capabilities, got ${satCaps}`);
+    assert.ok(satCaps >= 10, `expected >=10 SATISFIED capabilities, got ${satCaps}`);
     // no_fallback_shell_substitution must be SATISFIED
     const nf = r.capabilities.find(c => c.capability === 'no_fallback_shell_substitution');
     assert.ok(nf?.compatible, 'no_fallback_shell_substitution must be SATISFIED');

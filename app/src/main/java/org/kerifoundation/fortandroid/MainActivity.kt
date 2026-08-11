@@ -46,7 +46,6 @@ private const val ELLIPSIS = "..."
 private const val MAX_RENDERER_RECOVERY_ATTEMPTS = 1
 private const val MAX_BRIDGE_LOG_VALUE_CHARS = 160
 private const val MAX_BRIDGE_PAYLOAD_CHARS = 4096
-private const val NATIVE_PROOF_VECTOR = "android native bridge proof v1"
 private const val TRUSTED_HOST = "appassets.androidplatform.net"
 private const val TRUSTED_ORIGIN_RULE = "https://appassets.androidplatform.net"
 private const val TRUSTED_PATH_PREFIX = "/"
@@ -127,9 +126,6 @@ class MainActivity : AppCompatActivity() {
 
     private var webView: WebView? = null
     private var rendererRecoveryAttempts = 0
-    private var nativeCommandSequence = 0
-    private var nativeProofDispatched = false
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -151,8 +147,6 @@ class MainActivity : AppCompatActivity() {
             .addPathHandler("/", PayloadRootPathHandler(WebViewAssetLoader.AssetsPathHandler(this)))
             .build()
 
-        nativeProofDispatched = false
-
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             showError(R.string.webview_unsupported_message)
             return
@@ -169,7 +163,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun attachFreshWebView(loadPayload: Boolean) {
         errorView.visibility = View.GONE
-        nativeProofDispatched = false
 
         val freshWebView = createConfiguredWebView()
         rootLayout.addView(freshWebView, 0)
@@ -394,50 +387,6 @@ class MainActivity : AppCompatActivity() {
     private fun handleLifecycleMessage(envelope: JSONObject) {
         val message = envelope.optString("message")
         Log.i(LOG_TAG, "bridge lifecycle=${boundedLogValue(message)}")
-
-        if (message == BridgeContract.LIFECYCLE_READY && !nativeProofDispatched) {
-            nativeProofDispatched = true
-            dispatchNativeProofCommand()
-        }
-    }
-
-    private fun dispatchNativeProofCommand() {
-        val target = webView ?: run {
-            Log.w(LOG_TAG, "Skipped native proof dispatch because WebView is unavailable")
-            nativeProofDispatched = false
-            return
-        }
-
-        val commandId = "android-proof-${++nativeCommandSequence}"
-        val command = JSONObject()
-            .put("id", commandId)
-            .put("type", BridgeContract.WORKER_CMD_BLAKE3_HASH)
-            .put("data", NATIVE_PROOF_VECTOR)
-
-        val script = buildString {
-            append("(function(){")
-            append("if (typeof window.handleNativeCommand !== 'function') { return 'missing'; }")
-            append("window.handleNativeCommand(")
-            append(command.toString())
-            append(");")
-            append("return 'ok';")
-            append("})();")
-        }
-
-        target.evaluateJavascript(script) { result ->
-            when (result?.trim('"')) {
-                "ok" -> Log.i(LOG_TAG, "Dispatched native proof command id=$commandId")
-                "missing" -> {
-                    nativeProofDispatched = false
-                    Log.w(LOG_TAG, "Native proof dispatch skipped because handleNativeCommand is unavailable")
-                }
-
-                else -> {
-                    nativeProofDispatched = false
-                    Log.w(LOG_TAG, "Native proof dispatch returned unexpected result=$result")
-                }
-            }
-        }
     }
 
     private fun handleCryptoResult(envelope: JSONObject) {
