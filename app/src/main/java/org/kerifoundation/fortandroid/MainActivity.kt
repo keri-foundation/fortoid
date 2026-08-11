@@ -542,19 +542,34 @@ class MainActivity : AppCompatActivity() {
 
         override fun handle(path: String): WebResourceResponse? {
             val normalizedPath = path.trimStart('/')
-            val assetPath = when {
+            val primaryAssetPath = when {
                 normalizedPath.isEmpty() -> PAYLOAD_INDEX_ASSET_PATH
                 normalizedPath.startsWith(PAYLOAD_ASSET_PREFIX) -> normalizedPath
                 else -> "$PAYLOAD_ASSET_PREFIX$normalizedPath"
             }
 
-            val resolved = delegate.handle(assetPath)?.let { assetPath to it }
-                ?: return null
+            // Primary lookup
+            delegate.handle(primaryAssetPath)?.let { response ->
+                return applyMimeOverride(primaryAssetPath, response)
+            }
 
-            val resolvedAssetPath = resolved.first
-            val response = resolved.second
+            // Fallback: strip "app/" prefix for assets that live at payload root
+            // (wheels/, vendor/) but are requested under the /app/ URL namespace
+            if (primaryAssetPath.startsWith("payload/app/")) {
+                val fallbackPath = "payload/" + primaryAssetPath.removePrefix("payload/app/")
+                delegate.handle(fallbackPath)?.let { response ->
+                    return applyMimeOverride(fallbackPath, response)
+                }
+            }
 
-            val extension = resolvedAssetPath.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            return null
+        }
+
+        private fun applyMimeOverride(
+            assetPath: String,
+            response: WebResourceResponse
+        ): WebResourceResponse {
+            val extension = assetPath.substringAfterLast('.', missingDelimiterValue = "").lowercase()
             val expectedMimeType = mimeOverrides[extension]
                 ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
 
