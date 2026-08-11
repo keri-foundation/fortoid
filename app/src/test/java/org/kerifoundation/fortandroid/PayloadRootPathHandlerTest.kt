@@ -9,17 +9,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Tests for PayloadRootPathHandler fallback-removal behavior.
+ * Tests for PayloadRootPathHandler deterministic path selection.
  *
  * Uses a recording delegate that never constructs WebResourceResponse,
  * avoiding Android mockable-jar stub failures in plain JVM tests.
  *
  * Proves:
  * - Canonical paths are selected correctly (normalization).
- * - Primary path is tried first, then app/-stripped fallback.
- * - Delegate null propagates as handler null (missing → no fallback).
+ * - app/wheels/ and app/vendor/ paths strip the app/ prefix deterministically.
+ * - Other app/ paths (app/main.js, etc.) retain the app/ prefix.
+ * - Each request results in exactly one delegate call.
  * - Old placeholder path is never requested.
- * - app/ paths trigger fallback lookup when primary fails; non-app/ paths do not.
  * - PAYLOAD_MISSING_PLACEHOLDER_ASSET_PATH is absent from compiled class.
  */
 class PayloadRootPathHandlerTest {
@@ -42,9 +42,8 @@ class PayloadRootPathHandlerTest {
         val handler = MainActivity.PayloadRootPathHandler(delegate)
         val result = handler.handle("/")
         assertNull("delegate returns null → handler returns null", result)
-        assertEquals("primary + app/-stripped fallback", 2, delegate.requestedPaths.size)
+        assertEquals("exactly one delegate call", 1, delegate.requestedPaths.size)
         assertEquals("payload/app/index.html", delegate.requestedPaths[0])
-        assertEquals("payload/index.html", delegate.requestedPaths[1])
     }
 
     @Test
@@ -52,9 +51,8 @@ class PayloadRootPathHandlerTest {
         val delegate = RecordingPathHandler()
         val handler = MainActivity.PayloadRootPathHandler(delegate)
         handler.handle("")
-        assertEquals("primary + app/-stripped fallback", 2, delegate.requestedPaths.size)
+        assertEquals(1, delegate.requestedPaths.size)
         assertEquals("payload/app/index.html", delegate.requestedPaths[0])
-        assertEquals("payload/index.html", delegate.requestedPaths[1])
     }
 
     @Test
@@ -62,9 +60,8 @@ class PayloadRootPathHandlerTest {
         val delegate = RecordingPathHandler()
         val handler = MainActivity.PayloadRootPathHandler(delegate)
         handler.handle("app/main.js")
-        assertEquals("primary + app/-stripped fallback", 2, delegate.requestedPaths.size)
+        assertEquals(1, delegate.requestedPaths.size)
         assertEquals("payload/app/main.js", delegate.requestedPaths[0])
-        assertEquals("payload/main.js", delegate.requestedPaths[1])
     }
 
     @Test
@@ -72,9 +69,8 @@ class PayloadRootPathHandlerTest {
         val delegate = RecordingPathHandler()
         val handler = MainActivity.PayloadRootPathHandler(delegate)
         handler.handle("/app/main.js")
-        assertEquals("primary + app/-stripped fallback", 2, delegate.requestedPaths.size)
+        assertEquals(1, delegate.requestedPaths.size)
         assertEquals("payload/app/main.js", delegate.requestedPaths[0])
-        assertEquals("payload/main.js", delegate.requestedPaths[1])
     }
 
     @Test
@@ -82,8 +78,26 @@ class PayloadRootPathHandlerTest {
         val delegate = RecordingPathHandler()
         val handler = MainActivity.PayloadRootPathHandler(delegate)
         handler.handle("payload/contracts/runtime-requirements.json")
-        assertEquals("payload-prefixed path not under app/ → no fallback", 1, delegate.requestedPaths.size)
+        assertEquals(1, delegate.requestedPaths.size)
         assertEquals("payload/contracts/runtime-requirements.json", delegate.requestedPaths[0])
+    }
+
+    @Test
+    fun `wheels path strips app-slash prefix`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        handler.handle("app/wheels/keri_web-2.0.0.dev6-py3-none-any.whl")
+        assertEquals(1, delegate.requestedPaths.size)
+        assertEquals("payload/wheels/keri_web-2.0.0.dev6-py3-none-any.whl", delegate.requestedPaths[0])
+    }
+
+    @Test
+    fun `vendor path strips app-slash prefix`() {
+        val delegate = RecordingPathHandler()
+        val handler = MainActivity.PayloadRootPathHandler(delegate)
+        handler.handle("app/vendor/pyodide/0.29.3/wheels/cbor2-5.8.0-py3-none-any.whl")
+        assertEquals(1, delegate.requestedPaths.size)
+        assertEquals("payload/vendor/pyodide/0.29.3/wheels/cbor2-5.8.0-py3-none-any.whl", delegate.requestedPaths[0])
     }
 
     // ── Null propagation (missing → no fallback) ────────────────────────
@@ -94,7 +108,7 @@ class PayloadRootPathHandlerTest {
         val handler = MainActivity.PayloadRootPathHandler(delegate)
         val result = handler.handle("/")
         assertNull("missing entrypoint must return null", result)
-        assertEquals("primary + app/-stripped fallback", 2, delegate.requestedPaths.size)
+        assertEquals("exactly one delegate call", 1, delegate.requestedPaths.size)
     }
 
     @Test
@@ -103,7 +117,7 @@ class PayloadRootPathHandlerTest {
         val handler = MainActivity.PayloadRootPathHandler(delegate)
         val result = handler.handle("missing-file.js")
         assertNull("missing subordinate must return null", result)
-        assertEquals("non-app/ path → no fallback", 1, delegate.requestedPaths.size)
+        assertEquals(1, delegate.requestedPaths.size)
         assertEquals("payload/missing-file.js", delegate.requestedPaths[0])
     }
 
@@ -137,8 +151,7 @@ class PayloadRootPathHandlerTest {
         val handler = MainActivity.PayloadRootPathHandler(delegate)
         handler.handle("/")
         handler.handle("other.js")
-        // "/" → primary + fallback (2 calls); "other.js" → primary only (1 call)
-        assertEquals("three delegate calls: 2 for app/ path, 1 for non-app/ path", 3, delegate.requestedPaths.size)
+        assertEquals("two requests → exactly two delegate calls", 2, delegate.requestedPaths.size)
     }
 
     // ── Obsolete constant verification ──────────────────────────────────

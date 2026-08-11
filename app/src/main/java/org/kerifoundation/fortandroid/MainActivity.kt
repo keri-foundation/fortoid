@@ -540,26 +540,21 @@ class MainActivity : AppCompatActivity() {
             "py" to "text/plain"
         )
 
+        // URL path segments whose assets live at payload root (not under payload/app/)
+        private val appStrippedPrefixes = listOf("app/wheels/", "app/vendor/")
+
         override fun handle(path: String): WebResourceResponse? {
             val normalizedPath = path.trimStart('/')
-            val primaryAssetPath = when {
+            val assetPath = when {
                 normalizedPath.isEmpty() -> PAYLOAD_INDEX_ASSET_PATH
                 normalizedPath.startsWith(PAYLOAD_ASSET_PREFIX) -> normalizedPath
+                appStrippedPrefixes.any { normalizedPath.startsWith(it) } ->
+                    "$PAYLOAD_ASSET_PREFIX${normalizedPath.removePrefix("app/")}"
                 else -> "$PAYLOAD_ASSET_PREFIX$normalizedPath"
             }
 
-            // Primary lookup
-            delegate.handle(primaryAssetPath)?.let { response ->
-                return applyMimeOverride(primaryAssetPath, response)
-            }
-
-            // Fallback: strip "app/" prefix for assets that live at payload root
-            // (wheels/, vendor/) but are requested under the /app/ URL namespace
-            if (primaryAssetPath.startsWith("payload/app/")) {
-                val fallbackPath = "payload/" + primaryAssetPath.removePrefix("payload/app/")
-                delegate.handle(fallbackPath)?.let { response ->
-                    return applyMimeOverride(fallbackPath, response)
-                }
+            delegate.handle(assetPath)?.let { response ->
+                return applyMimeOverride(assetPath, response)
             }
 
             return null
