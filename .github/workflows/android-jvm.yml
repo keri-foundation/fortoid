@@ -60,7 +60,7 @@ jobs:
           python3 tools/verify-junit-suite.py \
             --results-dir app/build/test-results/testDebugUnitTest \
             --suite org.kerifoundation.fortandroid.PayloadRootPathHandlerTest \
-            --tests 11
+            --tests 13
 
   lint:
     name: Android lint
