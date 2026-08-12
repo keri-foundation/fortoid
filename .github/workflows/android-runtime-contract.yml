@@ -118,3 +118,22 @@ jobs:
           if [ -z "$APK" ]; then echo "FAIL: no APK found"; exit 1; fi
           echo "APK: $APK"
           node tools/verify-packaged-runtime.mjs --apk "$APK"
+
+      - name: Assemble release APK and AAB
+        run: ./gradlew :app:assembleRelease :app:bundleRelease --no-daemon
+
+      - name: Verify release APK payload (exact inventory, digests, bytes)
+        shell: bash
+        run: |
+          APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          if [ ! -f "$APK" ]; then echo "FAIL: release APK not found at $APK"; exit 1; fi
+          echo "release APK: $APK"
+          node tools/verify-packaged-runtime.mjs --apk "$APK"
+
+      - name: Verify release AAB payload (exact inventory, digests, bytes)
+        shell: bash
+        run: |
+          AAB=app/build/outputs/bundle/release/app-release.aab
+          if [ ! -f "$AAB" ]; then echo "FAIL: release AAB not found at $AAB"; exit 1; fi
+          echo "release AAB: $AAB"
+          node tools/verify-packaged-runtime.mjs --aab "$AAB"

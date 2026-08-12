@@ -69,19 +69,19 @@ tasks.register("verifyPreparedPayload") {
 
         if (!payloadDir.exists()) {
             throw GradleException(
-                "Payload directory missing. Run: ./sync-payload.sh --fortweb-dir <path>"
+                "Payload directory missing. Run: node tools/import-fortweb-runtime-package.mjs <fortweb-runtime.zip>"
             )
         }
 
         if (!manifestFile.exists()) {
             throw GradleException(
-                "manifest.json missing. Run: ./sync-payload.sh --fortweb-dir <path>"
+                "manifest.json missing. Run: node tools/import-fortweb-runtime-package.mjs <fortweb-runtime.zip>"
             )
         }
 
         if (!entryHtml.exists() || !mainJs.exists() || !requirementsContract.exists()) {
             throw GradleException(
-                "FortWeb runtime incomplete. Run: ./sync-payload.sh --fortweb-dir <path>"
+                "FortWeb runtime incomplete. Run: node tools/import-fortweb-runtime-package.mjs <fortweb-runtime.zip>"
             )
         }
 
@@ -89,7 +89,7 @@ tasks.register("verifyPreparedPayload") {
     }
 }
 
-// Wire into assembleDebug but not Android Studio sync
-tasks.matching { it.name == "assembleDebug" }.configureEach {
+// Wire into packaging tasks but not Android Studio sync
+tasks.matching { it.name in setOf("assembleDebug", "assembleRelease", "bundleRelease") }.configureEach {
     dependsOn("verifyPreparedPayload")
 }

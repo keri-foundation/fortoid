@@ -16,6 +16,7 @@ import {
   loadManifest,
   verifyPayload,
   verifyApk,
+  verifyAab,
   findCaseCollisions,
 } from './verify-packaged-runtime.mjs';
 
@@ -189,6 +190,49 @@ with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as zf:
 
 function mkdirSyncRecursive(p) {
   mkdirSync(p, { recursive: true });
+}
+
+// Turn a dir fixture into an AAB-like ZIP (payload under base/assets/payload/)
+async function makeCanonicalAab(label) {
+  const s = seq();
+  const idxContent = `idx-${s}`;
+  const rrContent = `rr-${s}`;
+
+  const mf = makeManifest({
+    files: [
+      { path: 'app/index.html', sha256: sha256(Buffer.from(idxContent)), bytes: Buffer.byteLength(idxContent) },
+      { path: 'contracts/runtime-requirements.json', sha256: sha256(Buffer.from(rrContent)), bytes: Buffer.byteLength(rrContent) },
+    ],
+  });
+
+  const mfRaw = JSON.stringify(mf, null, 2);
+  const mfBytes = Buffer.from(mfRaw, 'utf-8');
+  const csLine = `${sha256(mfBytes)}  manifest.json\n`;
+
+  const files = {};
+  files['base/assets/payload/manifest.json'] = mfRaw;
+  files['base/assets/payload/checksums.sha256'] = csLine;
+  files['base/assets/payload/app/index.html'] = idxContent;
+  files['base/assets/payload/contracts/runtime-requirements.json'] = rrContent;
+
+  return { zipPath: await makeZip(`canonical-aab-${label}`, files), mf, mfBytes };
+}
+
+async function dirAsAab(stagedDir, label) {
+  const zipDir = path.join(FIXTURE_DIR, `aab-${seq()}-${label}`);
+  await mkdir(path.join(zipDir, 'base/assets/payload'), { recursive: true });
+  const stagedFiles = await readdir(stagedDir, { recursive: true, withFileTypes: true });
+  for (const ent of stagedFiles) {
+    if (!ent.isFile()) continue;
+    const src = path.join(ent.parentPath || ent.path, ent.name);
+    const rel = path.relative(stagedDir, src);
+    const dst = path.join(zipDir, 'base/assets/payload', rel);
+    await mkdir(path.dirname(dst), { recursive: true });
+    await cp(src, dst);
+  }
+  const zipPath = path.join(zipDir, 'test.aab');
+  execFileSync('zip', ['-q', '-r', zipPath, '.'], { cwd: zipDir, timeout: 10000 });
+  return zipPath;
 }
 
 // ── setup / teardown ────────────────────────────────────────────────────────
@@ -607,5 +651,132 @@ with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as zf:
   it('30. no assets/payload subtree fails', async () => {
     const zipPath = await makeZip('no-sub', { 'not-payload/x.txt': 'x' });
     await assert.rejects(() => verifyApk(zipPath), /no payload files found/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AAB verification
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('verifyAab', () => {
+  it('31. valid AAB passes', async () => {
+    const { zipPath } = await makeCanonicalAab('ok');
+    const r = await verifyAab(zipPath);
+    assert.deepStrictEqual(r.errors, []);
+    assert.ok(r.payloadMembers.length > 0);
+  });
+
+  it('32. no base/assets/payload subtree fails', async () => {
+    const zipPath = await makeZip('aab-no-sub', { 'other/file.txt': 'data' });
+    await assert.rejects(() => verifyAab(zipPath), /no payload files found in AAB/);
+  });
+
+  it('33. AAB missing producer file fails', async () => {
+    const { dir } = await stage();
+    await rm(path.join(dir, 'contracts/runtime-requirements.json'));
+    const zipPath = await dirAsAab(dir, 'no-rr');
+    const r = await verifyAab(zipPath);
+    assert.ok(r.errors.some(m => m.includes('missing manifest file')));
+  });
+
+  it('34. AAB unexpected payload member fails', async () => {
+    const { dir } = await stage();
+    await writeFile(path.join(dir, 'secret.txt'), 'extra');
+    const zipPath = await dirAsAab(dir, 'extra');
+    const r = await verifyAab(zipPath);
+    assert.ok(r.errors.some(m => m.includes('unexpected file')));
+  });
+
+  it('35. AAB digest mismatch fails', async () => {
+    const { dir } = await stage();
+    await writeFile(path.join(dir, 'app/index.html'), 'tampered');
+    const mf = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf-8'));
+    const mfRaw = JSON.stringify(mf, null, 2);
+    const mfBytes = Buffer.from(mfRaw, 'utf-8');
+    await writeFile(path.join(dir, 'checksums.sha256'), `${sha256(mfBytes)}  manifest.json\n`);
+    const zipPath = await dirAsAab(dir, 'digest-bad');
+    const r = await verifyAab(zipPath);
+    assert.ok(r.errors.some(m => m.includes('digest mismatch')));
+  });
+
+  it('36. AAB traversal member fails before extraction', async () => {
+    const zipDir = path.join(FIXTURE_DIR, `aab-${seq()}-trav`);
+    await mkdir(path.join(zipDir, 'base/assets/payload'), { recursive: true });
+    const mfContent = JSON.stringify({ package_name: 'fortweb-runtime', producer: 'fortweb', files: [] });
+    await writeFile(path.join(zipDir, 'base/assets/payload/manifest.json'), mfContent);
+    const zipPath = path.join(zipDir, 'test.aab');
+    execFileSync('python3', ['-c', `
+import zipfile, os
+zp = '${zipPath}'
+root = '${zipDir}'
+with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for dirpath, dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            fp = os.path.join(dirpath, fn)
+            arcname = os.path.relpath(fp, root)
+            zf.write(fp, arcname)
+    zf.writestr('base/assets/payload/../outside.txt', 'escaped')
+`], { timeout: 10000 });
+    await assert.rejects(() => verifyAab(zipPath), /unsafe payload member/);
+  });
+
+  it('37. AAB duplicate member fails before extraction', async () => {
+    const { dir } = await stage();
+    const zipDir = path.join(FIXTURE_DIR, `aab-${seq()}-dup`);
+    mkdirSyncRecursive(path.join(zipDir, 'base/assets/payload'));
+    const srcEnts = readdirSync(dir, { recursive: true, withFileTypes: true });
+    for (const ent of srcEnts) {
+      if (!ent.isFile()) continue;
+      const src = path.join(ent.parentPath || ent.path, ent.name);
+      const rel = path.relative(dir, src);
+      const dst = path.join(zipDir, 'base/assets/payload', rel);
+      mkdirSyncRecursive(path.dirname(dst));
+      copyFileSync(src, dst);
+    }
+    const zipPath = path.join(zipDir, 'test.aab');
+    execFileSync('python3', ['-c', `
+import zipfile, os
+zp = '${zipPath}'
+root = '${zipDir}'
+with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for dirpath, dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            fp = os.path.join(dirpath, fn)
+            arcname = os.path.relpath(fp, root)
+            zf.write(fp, arcname)
+            if fn == 'manifest.json':
+                zf.write(fp, arcname)
+`], { timeout: 10000 });
+    await assert.rejects(() => verifyAab(zipPath), /duplicate AAB member/);
+  });
+
+  it('38. AAB case-colliding members fail', async () => {
+    const { dir } = await stage();
+    const zipDir = path.join(FIXTURE_DIR, `aab-${seq()}-case`);
+    await mkdir(path.join(zipDir, 'base/assets/payload'), { recursive: true });
+    const files = await readdir(dir, { recursive: true, withFileTypes: true });
+    for (const ent of files) {
+      if (!ent.isFile()) continue;
+      const src = path.join(ent.parentPath || ent.path, ent.name);
+      const rel = path.relative(dir, src);
+      const dst = path.join(zipDir, 'base/assets/payload', rel);
+      await mkdir(path.dirname(dst), { recursive: true });
+      await cp(src, dst);
+    }
+    const zipPath = path.join(zipDir, 'test.aab');
+    execFileSync('python3', ['-c', `
+import zipfile, os
+zp = '${zipPath}'
+root = '${zipDir}'
+with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for dirpath, dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            fp = os.path.join(dirpath, fn)
+            arcname = os.path.relpath(fp, root)
+            zf.write(fp, arcname)
+    mf_src = os.path.join(root, 'base/assets/payload/manifest.json')
+    zf.write(mf_src, 'base/assets/payload/MANIFEST.JSON')
+`], { timeout: 10000 });
+    await assert.rejects(() => verifyAab(zipPath), /case-colliding AAB members/);
   });
 });

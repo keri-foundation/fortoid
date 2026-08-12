@@ -17,7 +17,6 @@ import { tmpdir } from 'node:os';
 
 const MANIFEST_FILENAME = 'manifest.json';
 const CHECKSUM_FILENAME = 'checksums.sha256';
-const APK_PAYLOAD_PREFIX = 'assets/payload/';
 const STALE_ANDROID_MANIFEST = 'android-payload-manifest.json';
 const STALE_ORIGIN_CONTRACT = 'fortweb/app/runtime-origin-contract.json';
 const CS_DIGEST_RE = /^[0-9a-f]{64}$/;
@@ -240,12 +239,15 @@ export async function verifyPayload(rootDir, opts = {}) {
   return errors;
 }
 
-// ── APK mode — machine-readable listing, pre-extraction validation ─────────
+// ── Android archive mode — machine-readable listing, pre-extraction validation ─
 
-/** List APK members using unzip -Z -1 (machine-readable). */
-function unzipListMachine(apkPath) {
+const APK_PAYLOAD_PREFIX = 'assets/payload/';
+const AAB_PAYLOAD_PREFIX = 'base/assets/payload/';
+
+/** List archive members using unzip -Z -1 (machine-readable). */
+function unzipListMachine(archivePath) {
   try {
-    const out = execFileSync('unzip', ['-Z', '-1', apkPath], {
+    const out = execFileSync('unzip', ['-Z', '-1', archivePath], {
       encoding: 'utf-8', timeout: 15000, maxBuffer: 10 * 1024 * 1024,
     });
     return out.trim().split('\n').filter(Boolean);
@@ -254,10 +256,10 @@ function unzipListMachine(apkPath) {
   }
 }
 
-/** Extract specific members from APK. */
-function unzipExtractMembers(apkPath, members, destDir) {
+/** Extract specific members from an archive. */
+function unzipExtractMembers(archivePath, members, destDir) {
   try {
-    execFileSync('unzip', ['-q', '-o', apkPath, ...members, '-d', destDir], {
+    execFileSync('unzip', ['-q', '-o', archivePath, ...members, '-d', destDir], {
       timeout: 30000, maxBuffer: 10 * 1024 * 1024,
     });
   } catch (e) {
@@ -265,56 +267,60 @@ function unzipExtractMembers(apkPath, members, destDir) {
   }
 }
 
-export async function verifyApk(apkPath) {
-  if (!existsSync(apkPath)) throw new VerifyError(`APK not found: ${apkPath}`);
+/**
+ * Verify a ZIP-based Android package (APK or AAB) carries an exact copy of the
+ * canonical FortWeb payload under the given archive member prefix.
+ */
+async function verifyAndroidArchive(archivePath, payloadPrefix, artifactKind) {
+  if (!existsSync(archivePath)) throw new VerifyError(`${artifactKind} not found: ${archivePath}`);
 
   // Machine-readable member listing
-  const allMembers = unzipListMachine(apkPath);
+  const allMembers = unzipListMachine(archivePath);
 
   // Reject unsafe members immediately — before prefix filtering
   const memberErrs = [];
   for (const m of allMembers) {
     if (!isSafeRelative(m)) memberErrs.push(`unsafe payload member: ${m}`);
   }
-  if (memberErrs.length) throw new VerifyError(`APK member validation:\n  - ${memberErrs.join('\n  - ')}`);
+  if (memberErrs.length) throw new VerifyError(`${artifactKind} member validation:\n  - ${memberErrs.join('\n  - ')}`);
 
   // Filter to payload members (not directory entries)
-  const payloadMembers = allMembers.filter(m => m.startsWith(APK_PAYLOAD_PREFIX) && !m.endsWith('/'));
+  const payloadMembers = allMembers.filter(m => m.startsWith(payloadPrefix) && !m.endsWith('/'));
   if (payloadMembers.length === 0)
-    throw new VerifyError(`no payload files found in APK under ${APK_PAYLOAD_PREFIX}`);
+    throw new VerifyError(`no payload files found in ${artifactKind} under ${payloadPrefix}`);
 
   // Validate member paths before extraction
   const memErrs = [];
   for (const m of payloadMembers) {
-    const rel = m.slice(APK_PAYLOAD_PREFIX.length);
+    const rel = m.slice(payloadPrefix.length);
     if (!isSafeRelative(rel)) memErrs.push(`unsafe payload member: ${m}`);
   }
   // Duplicate detection
   const seenMems = new Set();
   for (const m of payloadMembers) {
-    if (seenMems.has(m)) memErrs.push(`duplicate APK member: ${m}`);
+    if (seenMems.has(m)) memErrs.push(`duplicate ${artifactKind} member: ${m}`);
     seenMems.add(m);
   }
   // Case-collision detection
   const memCollisions = findCaseCollisions(payloadMembers);
   for (const [a, b] of memCollisions)
-    memErrs.push(`case-colliding APK members: "${a}" vs "${b}"`);
+    memErrs.push(`case-colliding ${artifactKind} members: "${a}" vs "${b}"`);
 
-  if (memErrs.length) throw new VerifyError(`APK member validation:\n  - ${memErrs.join('\n  - ')}`);
+  if (memErrs.length) throw new VerifyError(`${artifactKind} member validation:\n  - ${memErrs.join('\n  - ')}`);
 
   // Require manifest.json exists in payload
-  if (!payloadMembers.includes(APK_PAYLOAD_PREFIX + MANIFEST_FILENAME))
-    throw new VerifyError(`${APK_PAYLOAD_PREFIX}${MANIFEST_FILENAME} not found in APK`);
+  if (!payloadMembers.includes(payloadPrefix + MANIFEST_FILENAME))
+    throw new VerifyError(`${payloadPrefix}${MANIFEST_FILENAME} not found in ${artifactKind}`);
 
-  const tmpDir = path.join(tmpdir(), `apk-verify-${Date.now()}`);
+  const tmpDir = path.join(tmpdir(), `${artifactKind.toLowerCase()}-verify-${Date.now()}`);
   try {
     await mkdir(tmpDir, { recursive: true });
-    unzipExtractMembers(apkPath, payloadMembers, tmpDir);
+    unzipExtractMembers(archivePath, payloadMembers, tmpDir);
 
-    const errors = await verifyPayload(tmpDir, { apkPrefix: APK_PAYLOAD_PREFIX });
+    const errors = await verifyPayload(tmpDir, { apkPrefix: payloadPrefix });
 
     // Check for stale nested fortweb structure
-    const staleNested = path.join(tmpDir, APK_PAYLOAD_PREFIX + 'fortweb');
+    const staleNested = path.join(tmpDir, payloadPrefix + 'fortweb');
     if (existsSync(staleNested)) {
       errors.push('stale nested payload/fortweb/ subtree present');
     }
@@ -323,6 +329,14 @@ export async function verifyApk(apkPath) {
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+export async function verifyApk(apkPath) {
+  return verifyAndroidArchive(apkPath, APK_PAYLOAD_PREFIX, 'APK');
+}
+
+export async function verifyAab(aabPath) {
+  return verifyAndroidArchive(aabPath, AAB_PAYLOAD_PREFIX, 'AAB');
 }
 
 // ── CLI boundary (process.exit only here) ──────────────────────────────────
@@ -335,6 +349,10 @@ async function main() {
     const apkPath = args[1];
     if (!apkPath) { console.error('usage: node tools/verify-packaged-runtime.mjs --apk <apk>'); process.exit(2); }
     result = await verifyApk(apkPath);
+  } else if (args[0] === '--aab') {
+    const aabPath = args[1];
+    if (!aabPath) { console.error('usage: node tools/verify-packaged-runtime.mjs --aab <aab>'); process.exit(2); }
+    result = await verifyAab(aabPath);
   } else {
     const dirPath = args[0];
     if (!dirPath) { console.error('usage: node tools/verify-packaged-runtime.mjs <dir>'); process.exit(2); }
