@@ -462,8 +462,6 @@ class MainActivity : AppCompatActivity() {
                 "bridge $type=${boundedLogValue(envelope.optString("message"))}"
             )
 
-            BridgeContract.BRIDGE_CRYPTO_RESULT -> handleCryptoResult(envelope)
-
             else -> Log.w(LOG_TAG, "Rejected unsupported bridge type=$type")
         }
     }
@@ -471,45 +469,6 @@ class MainActivity : AppCompatActivity() {
     private fun handleLifecycleMessage(envelope: JSONObject) {
         val message = envelope.optString("message")
         Log.i(LOG_TAG, "bridge lifecycle=${boundedLogValue(message)}")
-    }
-
-    private fun handleCryptoResult(envelope: JSONObject) {
-        val operationId = boundedLogValue(envelope.optString("id"))
-        val error = envelope.optString("error").takeIf { it.isNotBlank() }
-        if (error != null) {
-            Log.e(LOG_TAG, "bridge crypto_result id=$operationId error=${boundedLogValue(error)}")
-            return
-        }
-
-        val rawMessage = envelope.optString("message")
-        if (rawMessage.isBlank()) {
-            Log.w(LOG_TAG, "bridge crypto_result id=$operationId missing message payload")
-            return
-        }
-
-        val payload = try {
-            JSONObject(rawMessage)
-        } catch (exception: JSONException) {
-            Log.w(LOG_TAG, "bridge crypto_result id=$operationId malformed payload", exception)
-            return
-        }
-
-        when (payload.optString("type")) {
-            BridgeContract.WORKER_RES_BLAKE3_RESULT -> Log.i(
-                LOG_TAG,
-                "native proof hash=${boundedLogValue(payload.optString("hex"))}"
-            )
-
-            BridgeContract.WORKER_RES_ERROR -> Log.e(
-                LOG_TAG,
-                "bridge crypto_result id=$operationId workerError=${boundedLogValue(payload.optString("error"))}"
-            )
-
-            else -> Log.i(
-                LOG_TAG,
-                "bridge crypto_result id=$operationId type=${boundedLogValue(payload.optString("type"))}"
-            )
-        }
     }
 
     private fun boundedLogValue(value: String?, maxLength: Int = MAX_BRIDGE_LOG_VALUE_CHARS): String {
