@@ -190,11 +190,13 @@ const FORBIDDEN_PREDICATES = {
     if (!workers || workers.service_worker_registration !== 'prohibited-by-host') {
       return { compatible: false, reason: 'workers.service_worker_registration must be "prohibited-by-host"', evidence: 'config' };
     }
-    // STATICALLY-VERIFIED: an Android-owned document-start guard rejects
-    // navigator.serviceWorker.register() before producer JS executes, with
-    // native ServiceWorkerWebSettingsCompat defense-in-depth. Behavioral
-    // hosted proof is a separate acceptance gate.
-    return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
+    // HOSTED PROVEN: ServiceWorkerProhibitionProofTest on API 36 verifies the
+    // Android-owned document-start guard shadows navigator.serviceWorker.register
+    // on the ServiceWorkerContainer instance with writable=false and
+    // configurable=false, so assignment and Object.defineProperty tamper both
+    // fail, and a same-origin registration attempt is rejected with
+    // SecurityError leaving zero registrations and no controller.
+    return { compatible: true, evidence: 'HOSTED PROVEN' };
   },
 
   general_purpose_browsing(rr, cfg) {

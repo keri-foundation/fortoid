@@ -314,7 +314,7 @@ describe('validateCompatibility — forbidden behaviors', () => {
     const sw = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'service_worker_registration');
     assert.ok(sw, 'service_worker_registration must be evaluated');
     assert.ok(sw.compatible, 'service_worker_registration must be SATISFIED by explicit host prohibition');
-    assert.ok(sw.evidence === 'STATICALLY-VERIFIED', `expected STATICALLY-VERIFIED, got ${sw.evidence}`);
+    assert.ok(sw.evidence === 'HOSTED PROVEN', `expected HOSTED PROVEN, got ${sw.evidence}`);
   });
 
   it('22c. service_worker_registration without host prohibition fails', async () => {
