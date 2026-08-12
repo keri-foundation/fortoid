@@ -183,11 +183,17 @@ const FORBIDDEN_PREDICATES = {
   },
 
   service_worker_registration(rr, cfg) {
-    // STATICALLY-VERIFIED: Android WebView does not support Service Worker
-    // registration (no navigator.serviceWorker API). Additionally,
-    // allowFileAccess=false, allowContentAccess=false, and the app only
-    // serves bundled assets via WebViewAssetLoader — no remote content
-    // that could attempt registration.
+    // The runtime contract forbids registration. Android WebView DOES expose
+    // Service Worker APIs (ServiceWorkerController since API 24), so the
+    // platform must declare an explicit Android-owned prohibition mechanism.
+    const workers = cfg?.workers;
+    if (!workers || workers.service_worker_registration !== 'prohibited-by-host') {
+      return { compatible: false, reason: 'workers.service_worker_registration must be "prohibited-by-host"', evidence: 'config' };
+    }
+    // STATICALLY-VERIFIED: an Android-owned document-start guard rejects
+    // navigator.serviceWorker.register() before producer JS executes, with
+    // native ServiceWorkerWebSettingsCompat defense-in-depth. Behavioral
+    // hosted proof is a separate acceptance gate.
     return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
   },
 

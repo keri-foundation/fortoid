@@ -99,6 +99,27 @@ describe('nested validation', () => {
     assert.ok(errors.some(e => e.includes('bridge.provenance')));
   });
 
+  it('rejects missing service_worker_registration policy', () => {
+    const config = loadGood();
+    delete config.workers.service_worker_registration;
+    const errors = validatePlatformConfig(config);
+    assert.ok(errors.some(e => e.includes('workers.service_worker_registration') && e.includes('missing')));
+  });
+
+  it('rejects unsupported service_worker_registration policy value', () => {
+    const config = loadGood();
+    config.workers.service_worker_registration = 'allowed';
+    const errors = validatePlatformConfig(config);
+    assert.ok(errors.some(e => e.includes('workers.service_worker_registration')));
+  });
+
+  it('rejects policy explicitly allowing registration', () => {
+    const config = loadGood();
+    config.workers.service_worker_registration = 'permitted';
+    const errors = validatePlatformConfig(config);
+    assert.ok(errors.some(e => e.includes('workers.service_worker_registration')));
+  });
+
   it('rejects unknown nested field', () => {
     const config = loadGood();
     config.origin.extra_prop = true;

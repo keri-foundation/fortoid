@@ -309,12 +309,35 @@ describe('validateCompatibility — forbidden behaviors', () => {
     assert.ok(!unk.compatible, 'must fail');
   });
 
-  it('22. service_worker_registration is PROVEN', async () => {
+  it('22. service_worker_registration requires host prohibition', async () => {
     const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
     const sw = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'service_worker_registration');
     assert.ok(sw, 'service_worker_registration must be evaluated');
-    assert.ok(sw.compatible, 'service_worker_registration must be SATISFIED');
+    assert.ok(sw.compatible, 'service_worker_registration must be SATISFIED by explicit host prohibition');
     assert.ok(sw.evidence === 'STATICALLY-VERIFIED', `expected STATICALLY-VERIFIED, got ${sw.evidence}`);
+  });
+
+  it('22c. service_worker_registration without host prohibition fails', async () => {
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    delete cfg.workers.service_worker_registration;
+    const { dir } = await stageFixture('sw-missing', {}, cfg);
+    const cfgPath = path.join(dir, 'runtime-platform-config.json');
+    const r = await validateCompatibility(dir, cfgPath);
+    const sw = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'service_worker_registration');
+    assert.ok(sw, 'must evaluate');
+    assert.ok(!sw.compatible, 'missing host prohibition must fail');
+    assert.ok(sw.evidence === 'config', `expected config evidence, got ${sw.evidence}`);
+  });
+
+  it('22d. service_worker_registration with permissive policy fails', async () => {
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    cfg.workers.service_worker_registration = 'allowed';
+    const { dir } = await stageFixture('sw-allowed', {}, cfg);
+    const cfgPath = path.join(dir, 'runtime-platform-config.json');
+    const r = await validateCompatibility(dir, cfgPath);
+    const sw = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'service_worker_registration');
+    assert.ok(sw, 'must evaluate');
+    assert.ok(!sw.compatible, 'permissive policy must fail');
   });
 
   it('22a. missing forbidden behavior from vocabulary fails', async () => {

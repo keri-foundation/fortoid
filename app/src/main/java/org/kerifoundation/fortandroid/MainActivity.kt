@@ -31,6 +31,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.SafeBrowsingResponseCompat
+import androidx.webkit.ServiceWorkerControllerCompat
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
@@ -50,6 +51,34 @@ private const val TRUSTED_HOST = "appassets.androidplatform.net"
 private const val TRUSTED_ORIGIN_RULE = "https://appassets.androidplatform.net"
 private const val TRUSTED_PATH_PREFIX = "/"
 private const val TRUSTED_SCHEME = "https"
+
+// Android-owned Service Worker prohibition guard, injected at document-start
+// before producer application JavaScript can register a Service Worker. The
+// runtime contract forbids service_worker_registration; the guard enforces it.
+private const val SERVICE_WORKER_PROHIBITION_MARKER = "__FORT_SW_REGISTRATION_PROHIBITED__"
+private const val SERVICE_WORKER_REJECT_MESSAGE = "Service Worker registration is prohibited by the Android host."
+private val SERVICE_WORKER_PROHIBITION_SCRIPT = """
+    (function () {
+        var installed = false;
+        try {
+            var sw = navigator.serviceWorker;
+            if (sw && typeof sw.register === 'function') {
+                Object.defineProperty(sw, 'register', {
+                    value: function () {
+                        return Promise.reject(new DOMException('$SERVICE_WORKER_REJECT_MESSAGE', 'SecurityError'));
+                    },
+                    writable: false,
+                    configurable: false,
+                    enumerable: false
+                });
+            }
+            installed = true;
+        } catch (e) {
+            installed = false;
+        }
+        window.$SERVICE_WORKER_PROHIBITION_MARKER = installed;
+    })();
+""".trimIndent()
 private const val PAYLOAD_URL = "https://appassets.androidplatform.net/app/index.html"
 private const val PAYLOAD_ASSET_PREFIX = "payload/"
 private const val PAYLOAD_INDEX_ASSET_PATH = "payload/app/index.html"
@@ -173,6 +202,10 @@ class MainActivity : AppCompatActivity() {
                 showError(R.string.payload_load_failed)
                 return
             }
+            if (!prepareServiceWorkerPolicy(freshWebView)) {
+                showError(R.string.payload_load_failed)
+                return
+            }
             freshWebView.loadUrl(PAYLOAD_URL)
         }
     }
@@ -219,6 +252,57 @@ class MainActivity : AppCompatActivity() {
                 false
             }
         }
+    }
+
+    /**
+     * Installs the Android-owned Service Worker prohibition policy before
+     * navigation. Returns true only if the document-start guard was installed;
+     * false prevents navigation (fail closed).
+     *
+     * The runtime contract forbids service_worker_registration. The guard
+     * deterministically rejects navigator.serviceWorker.register(...) and the
+     * native ServiceWorkerWebSettingsCompat flags provide defense-in-depth.
+     */
+    private fun prepareServiceWorkerPolicy(webView: WebView): Boolean {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            Log.e(LOG_TAG, "DOCUMENT_START_SCRIPT not supported — cannot prohibit service worker registration")
+            return false
+        }
+
+        try {
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                SERVICE_WORKER_PROHIBITION_SCRIPT,
+                setOf(TRUSTED_ORIGIN_RULE)
+            )
+            Log.i(LOG_TAG, "Service Worker prohibition guard injected")
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Service Worker prohibition injection failed", e)
+            return false
+        }
+
+        // Native defense-in-depth: deny service-worker network/file/content
+        // access where supported. These do NOT prevent registration by
+        // themselves; the document-start guard is the enforcement boundary.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {
+            try {
+                val settings = ServiceWorkerControllerCompat.getInstance().serviceWorkerWebSettings
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BLOCK_NETWORK_LOADS)) {
+                    settings.blockNetworkLoads = true
+                }
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_FILE_ACCESS)) {
+                    settings.allowFileAccess = false
+                }
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_CONTENT_ACCESS)) {
+                    settings.allowContentAccess = false
+                }
+                Log.i(LOG_TAG, "Service Worker native settings hardened")
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Service Worker native settings unavailable", e)
+            }
+        }
+
+        return true
     }
 
     @Suppress("DEPRECATION")

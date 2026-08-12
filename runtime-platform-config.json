@@ -21,7 +21,8 @@
   },
   "workers": {
     "available": true,
-    "framework": "webview-javascript"
+    "framework": "webview-javascript",
+    "service_worker_registration": "prohibited-by-host"
   },
   "storage": {
     "mechanism": "webview-persistent",

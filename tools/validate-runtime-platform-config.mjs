@@ -40,6 +40,7 @@ const NETWORK_POLICIES = ['deny-all'];
 const ASSET_SOURCES = ['application-bundle'];
 const ASSET_DELIVERIES = ['webview-asset-loader', 'custom-scheme-handler'];
 const WORKER_FRAMEWORKS = ['webview-javascript', 'wkwebview-javascript'];
+const WORKER_SERVICE_WORKER_POLICIES = ['prohibited-by-host'];
 const STORAGE_MECHANISMS = ['webview-persistent', 'webkit-persistent'];
 const STORAGE_PARTITIONS = ['fixed-path-prefix', 'fixed-namespace'];
 const SECURITY_MECHANISMS = ['https-tls-like', 'custom-scheme-tls-like'];
@@ -196,6 +197,7 @@ export function validatePlatformConfig(config) {
     workers: {
       available: { type: 'boolean', allowed: [] },
       framework: { type: 'string', allowed: WORKER_FRAMEWORKS },
+      service_worker_registration: { type: 'string', allowed: WORKER_SERVICE_WORKER_POLICIES },
     },
     storage: {
       mechanism: { type: 'string', allowed: STORAGE_MECHANISMS },
