@@ -92,6 +92,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Prepare canonical FortWeb runtime
+        uses: ./.github/actions/prepare-fortweb-runtime
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:

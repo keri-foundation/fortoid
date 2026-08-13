@@ -1,0 +1,117 @@
+name: Prepare canonical FortWeb runtime
+description: |
+  Checks out the exact locked FortWeb producer revision, builds the canonical
+  runtime package, and imports/validates/verifies it into
+  app/src/main/assets/payload so the caller's subsequent steps (Gradle,
+  emulator, etc.) can consume it in the same job.
+
+  The authoritative producer revision lives in config/fortweb-runtime.json.
+  This action is orchestration only: it calls the existing Fortoid importer,
+  validator, and verifier rather than reimplementing their logic.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Read and validate FortWeb runtime lock
+      id: lock
+      shell: bash
+      run: |
+        set -euo pipefail
+        LOCK="config/fortweb-runtime.json"
+        if [ ! -f "$LOCK" ]; then
+          echo "::error::FortWeb runtime lock missing: $LOCK"
+          exit 1
+        fi
+        SCHEMA="$(jq -r '.schema // empty' "$LOCK")"
+        REPO="$(jq -r '.repository // empty' "$LOCK")"
+        COMMIT="$(jq -r '.commit // empty' "$LOCK")"
+
+        if [ "$SCHEMA" != "fortoid.fortweb-runtime-lock.v1" ]; then
+          echo "::error::lock schema must be fortoid.fortweb-runtime-lock.v1, got '$SCHEMA'"
+          exit 1
+        fi
+        if [ "$REPO" != "keri-foundation/fortweb" ]; then
+          echo "::error::lock repository must be keri-foundation/fortweb, got '$REPO'"
+          exit 1
+        fi
+        if ! printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
+          echo "::error::lock commit must be a full 40-char lowercase SHA, got '$COMMIT'"
+          exit 1
+        fi
+
+        echo "repository=$REPO" >> "$GITHUB_OUTPUT"
+        echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+        echo "Lock loaded: $REPO @ $COMMIT"
+
+    - name: Check out FortWeb producer
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ steps.lock.outputs.repository }}
+        ref: ${{ steps.lock.outputs.commit }}
+        path: .deps/fortweb
+
+    - name: Verify producer checkout
+      shell: bash
+      run: |
+        set -euo pipefail
+        ACTUAL="$(git -C .deps/fortweb rev-parse HEAD)"
+        EXPECTED="${{ steps.lock.outputs.commit }}"
+        if [ "$ACTUAL" != "$EXPECTED" ]; then
+          echo "::error::producer checkout mismatch: actual=$ACTUAL expected=$EXPECTED"
+          exit 1
+        fi
+        echo "FortWeb producer verified: $ACTUAL"
+
+    - name: Install FortWeb dependencies
+      shell: bash
+      working-directory: .deps/fortweb
+      run: npm ci
+
+    - name: Build FortWeb runtime
+      shell: bash
+      working-directory: .deps/fortweb
+      run: npm run build:runtime
+
+    - name: Generate canonical runtime ZIP
+      shell: bash
+      working-directory: .deps/fortweb
+      run: |
+        set -euo pipefail
+        rm -rf .tmp/runtime-packages
+        node tools/package-runtime.mjs
+
+    - name: Select canonical runtime ZIP
+      id: zip
+      shell: bash
+      working-directory: .deps/fortweb
+      run: |
+        set -euo pipefail
+        ZIP="$(find .tmp/runtime-packages -maxdepth 1 -name '*.zip' -type f -print -quit)"
+        if [ -z "$ZIP" ]; then
+          echo "::error::no canonical runtime ZIP produced"
+          exit 1
+        fi
+        EXTRA="$(find .tmp/runtime-packages -maxdepth 1 -name '*.zip' -type f | sed 1d | wc -l | tr -d ' ')"
+        if [ "$EXTRA" -ne 0 ]; then
+          echo "::error::expected exactly one canonical runtime ZIP, found $((EXTRA + 1))"
+          exit 1
+        fi
+        echo "path=$GITHUB_WORKSPACE/.deps/fortweb/$ZIP" >> "$GITHUB_OUTPUT"
+        echo "Canonical ZIP: $ZIP"
+
+    - name: Import runtime package
+      shell: bash
+      run: node tools/import-fortweb-runtime-package.mjs "${{ steps.zip.outputs.path }}"
+
+    - name: Validate staged payload
+      shell: bash
+      run: node tools/validate-staged-payload.mjs
+
+    - name: Verify staged payload bytes
+      shell: bash
+      run: node tools/verify-packaged-runtime.mjs app/src/main/assets/payload
