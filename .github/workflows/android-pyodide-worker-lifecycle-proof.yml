@@ -115,6 +115,36 @@ jobs:
           if [ "$SDK" != "36" ]; then echo "FAIL: expected SDK 36, got $SDK"; exit 1; fi
           echo "SDK: $SDK — OK"
 
+      # Temporary diagnostic: locate where Android-hosted PyWorker diverges from
+      # the browser control for pyscript.storage / polyscript.storage / IndexedDB.
+      # Test PASSES when the diagnostic completes even if storage is reported
+      # missing; it FAILS only when the diagnostic could not run. Remove once
+      # the storage root cause is fixed.
+      #
+      # MUST run before the lifecycle proof: the lifecycle proof currently has
+      # an expected failure (vaults.create -> webdbing.open -> pyscript.storage
+      # unavailable), and a normal shell failure would prevent a later step
+      # from executing. Do not use continue-on-error on the lifecycle step.
+      - name: Run Pyodide storage context diagnostic
+        run: |
+          ./gradlew :app:connectedDebugAndroidTest --no-daemon \
+            -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.PyodideStorageContextDiagnosticTest
+
+      - name: Verify Pyodide storage context diagnostic JUnit XML
+        if: always()
+        run: |
+          python3 tools/verify-junit-suite.py \
+            --results-dir app/build/outputs/androidTest-results/connected \
+            --suite org.kerifoundation.fortandroid.PyodideStorageContextDiagnosticTest \
+            --tests 1
+
+      # Always print the diagnostic result so it is recoverable from hosted CI
+      # even when the diagnostic (and therefore the JUnit step) passes.
+      - name: Print Pyodide storage context diagnostic result
+        if: always()
+        run: |
+          adb logcat -d -s PyodideStorageContextDiag:* 2>/dev/null | tail -120 || echo "(no diagnostic logcat)"
+
       - name: Run Pyodide worker lifecycle proof
         run: |
           ./gradlew :app:connectedDebugAndroidTest --no-daemon \
@@ -133,6 +163,8 @@ jobs:
         run: |
           echo "=== PyodideLifecycleProof ==="
           adb logcat -d -s PyodideLifecycleProof:* 2>/dev/null | tail -60 || echo "(none)"
+          echo "=== PyodideStorageContextDiag ==="
+          adb logcat -d -s PyodideStorageContextDiag:* 2>/dev/null | tail -80 || echo "(none)"
           echo "=== FortAndroid ==="
           adb logcat -d -s FortAndroid:* 2>/dev/null | tail -20 || echo "(none)"
           echo "=== chromium ==="

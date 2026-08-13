@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>PyWorker Storage Context Diagnostic</title>
+<script type="module">
+// Report results through a pollable global. This mirrors the producer bridge's
+// PyWorker bootstrap (config fetch/parse + fort_runtime_origin injection) but
+// runs a TEST-ONLY diagnostic worker instead of wallet-worker.py.
+window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__ = { state: "loading" };
+
+import { PyWorker } from "/vendor/pyscript/2025.11.2/core.js";
+import { parse as parseToml } from "/vendor/pyscript/2025.11.2/toml-BK2RWy-G.js";
+
+function fail(category, message, error) {
+    window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__ = {
+        state: "error",
+        category,
+        message,
+        errorClass: error && error.constructor ? error.constructor.name : undefined,
+    };
+}
+
+(async () => {
+    try {
+        const originContract = window.__FORT_RUNTIME_ORIGIN__;
+        if (!originContract || !originContract.configUrl) {
+            fail("ORIGIN_CONTRACT_MISSING", "window.__FORT_RUNTIME_ORIGIN__ incomplete");
+            return;
+        }
+
+        const configUrl = originContract.configUrl;
+        const response = await fetch(configUrl);
+        if (!response.ok) {
+            fail("CONFIG_FETCH_FAILED", "HTTP " + response.status + " for " + configUrl);
+            return;
+        }
+
+        const config = parseToml(await response.text());
+        // Producer-specific worker file mounts are irrelevant to this
+        // standalone diagnostic; drop them to avoid spurious fetches.
+        delete config.files;
+        config.fort_runtime_origin = originContract;
+
+        const workerUrl = "https://appassets.androidplatform.net/android-pyworker-storage-context-probe/storage-context-probe.py";
+
+        const worker = await PyWorker(workerUrl, {
+            type: "pyodide",
+            configURL: configUrl,
+            config,
+        });
+
+        const diagnostic = await worker.sync.diagnostic();
+        window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__ = { state: "done", diagnostic };
+    } catch (error) {
+        fail("PROBE_ERROR", error && error.message ? error.message : String(error), error);
+    }
+})();
+
+// Safety timeout: fail if the worker never produces a terminal result.
+setTimeout(() => {
+    if (window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__.state === "loading") {
+        window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__ = { state: "error", category: "PROBE_TIMEOUT" };
+    }
+}, 120000);
+</script>
