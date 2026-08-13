@@ -114,6 +114,10 @@ try {
         fail("BRIDGE_IMPORT_FAILED", "createRuntimeBridge not exported");
         return;
     }
+    if (window.__nativeEventCounts === null) {
+        fail("NATIVE_EVENT_COUNTER_UNAVAILABLE", "window.bridge.postMessage wrapper could not be installed");
+        return;
+    }
 
     const originContract = window.__FORT_RUNTIME_ORIGIN__;
     if (!originContract || !originContract.documentOrigin || !originContract.workerUrl || !originContract.configUrl) {
@@ -136,11 +140,6 @@ try {
         runtimeOriginContract: originContract,
     });
     setStage("bridge1_created");
-    const constructsAfterPhase1 = window.__workerTracker.constructCount;
-    if (constructsAfterPhase1 < 1) {
-        fail("FIRST_WORKER_BOOT_FAILED", "no Worker constructed after bridge1 creation");
-        return;
-    }
 
     setStage("vault_creating");
     const createResult = await bridge1.request("vaults.create", { name: alias });
@@ -150,11 +149,14 @@ try {
         return;
     }
     setStage("vault_created");
+    // Worker construction is asynchronous (bridge boot awaits config fetch +
+    // PyWorker), so capture counts only after the first request resolves.
+    const constructsAfterPhase1 = window.__workerTracker.constructCount;
     const worker1Id = window.__workerTracker.constructed[window.__workerTracker.constructed.length - 1];
     const bootAfterPhase1 = nativeCounts().boot;
     const readyAfterPhase1 = nativeCounts().ready;
     const preloadAfterPhase1 = nativeCounts().preloadComplete;
-    if (worker1Id === undefined || bootAfterPhase1 < 1 || readyAfterPhase1 < 1 || preloadAfterPhase1 < 1) {
+    if (worker1Id === undefined || constructsAfterPhase1 < 1 || bootAfterPhase1 < 1 || readyAfterPhase1 < 1 || preloadAfterPhase1 < 1) {
         fail("FIRST_WORKER_BOOT_FAILED", "first worker boot/preload evidence incomplete");
         return;
     }
@@ -198,11 +200,6 @@ try {
         runtimeOriginContract: originContract,
     });
     setStage("bridge2_created");
-    const constructsAfterPhase2 = window.__workerTracker.constructCount;
-    if (constructsAfterPhase2 <= constructsAfterPhase1) {
-        fail("SECOND_WORKER_NOT_DISTINCT", "no new Worker constructed after termination");
-        return;
-    }
 
     setStage("vault_listing_phase2");
     const list2 = await bridge2.request("vaults.list", {});
@@ -213,12 +210,18 @@ try {
     }
     setStage("persisted_vault_found");
 
+    // Capture worker counts only after the second request resolves (async boot).
+    const constructsAfterPhase2 = window.__workerTracker.constructCount;
     const worker2Id = window.__workerTracker.constructed[window.__workerTracker.constructed.length - 1];
     const bootAfterBridge2 = nativeCounts().boot;
     const readyAfterBridge2 = nativeCounts().ready;
     const preloadAfterBridge2 = nativeCounts().preloadComplete;
     const worker2TerminatedBeforeCleanup = window.__workerTracker.terminated.includes(worker2Id);
 
+    if (constructsAfterPhase2 <= constructsAfterPhase1) {
+        fail("SECOND_WORKER_NOT_DISTINCT", "no new Worker constructed after termination");
+        return;
+    }
     if (worker2Id === undefined || worker2Id <= worker1Id) {
         fail("SECOND_WORKER_NOT_DISTINCT", "second worker id not greater than first worker id");
         return;
