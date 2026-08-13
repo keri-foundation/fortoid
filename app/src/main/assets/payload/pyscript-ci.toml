@@ -1,6 +1,0 @@
-interpreter = "/vendor/pyodide/0.29.3/pyodide.mjs"
-
-[files]
-"./app/runtime/vaulting.py" = "./vaulting.py"
-"./app/runtime/transporting.py" = "./transporting.py"
-"./app/runtime/onboarding.py" = "./onboarding.py"
