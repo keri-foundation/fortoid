@@ -24,40 +24,8 @@ jobs:
       - name: Check out Fortoid
         uses: actions/checkout@v4
 
-      - name: Check out FortWeb
-        uses: actions/checkout@v4
-        with:
-          repository: keri-foundation/fortweb
-          ref: e079701a337468acb1484a1c2cf86acc517d8464
-          path: .deps/fortweb
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install FortWeb dependencies
-        run: npm ci
-        working-directory: .deps/fortweb
-
-      - name: Build FortWeb runtime
-        run: npm run build:runtime
-        working-directory: .deps/fortweb
-
-      - name: Generate FortWeb runtime package ZIP
-        run: node tools/package-runtime.mjs
-        working-directory: .deps/fortweb
-
-      - name: Import runtime package
-        run: |
-          ZIP=$(ls .deps/fortweb/.tmp/runtime-packages/*.zip | head -1)
-          node tools/import-fortweb-runtime-package.mjs "$ZIP"
-
-      - name: Validate staged payload
-        run: node tools/validate-staged-payload.mjs
-
-      - name: Verify staged payload
-        run: node tools/verify-packaged-runtime.mjs app/src/main/assets/payload
+      - name: Prepare canonical FortWeb runtime
+        uses: ./.github/actions/prepare-fortweb-runtime
 
       - name: Set up Java
         uses: actions/setup-java@v4
