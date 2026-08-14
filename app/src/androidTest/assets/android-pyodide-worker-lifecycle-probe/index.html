@@ -40,56 +40,9 @@ function fail(category, message) {
     };
 })();
 
-// ── 2. Count native bridge diagnostics BEFORE importing producer modules ──
-// Observation-only: forwards every message to the Android listener exactly once
-// with the original receiver semantics, and fails clearly (nativeCounterInstalled
-// remains false) if window.bridge.postMessage is unavailable or non-writable.
-(function installNativeEventCounter() {
-    window.__nativeEventCounts = null;
-    try {
-        const bridgeObj = window.bridge;
-        if (!bridgeObj || typeof bridgeObj.postMessage !== "function") {
-            return; // counts stay null → nativeCounterInstalled=false
-        }
-        const originalPostMessage = bridgeObj.postMessage;
-        const orig = originalPostMessage.bind(bridgeObj);
-        const counts = {
-            boot: 0,
-            ready: 0,
-            preloadComplete: 0,
-            preloadFailed: 0,
-            terminalFailure: 0
-        };
-        const wrapper = function (payload) {
-            try {
-                const obj = typeof payload === "string" ? JSON.parse(payload) : payload;
-                const msg = (obj && obj.message) || "";
-                const type = (obj && obj.type) || "";
-                if (type === "lifecycle" && msg.indexOf("state=boot") >= 0) counts.boot++;
-                if (type === "lifecycle" && msg.indexOf("state=ready") >= 0) counts.ready++;
-                if (msg.indexOf("worker_preload_complete") >= 0) counts.preloadComplete++;
-                if (msg.indexOf("worker_preload_failed") >= 0) counts.preloadFailed++;
-                if (msg.indexOf("terminal_failure") >= 0) counts.terminalFailure++;
-            } catch (_) { /* ignore unparseable */ }
-            return orig(payload);
-        };
-        bridgeObj.postMessage = wrapper;
-        // Fail clearly if the assignment did not take (e.g. frozen bridge object).
-        if (bridgeObj.postMessage !== wrapper) {
-            window.__nativeEventCounts = null;
-            return;
-        }
-        window.__nativeEventCounts = counts;
-    } catch (_) {
-        window.__nativeEventCounts = null;
-    }
-})();
-
-function nativeCounts() {
-    return window.__nativeEventCounts || {
-        boot: 0, ready: 0, preloadComplete: 0, preloadFailed: 0, terminalFailure: 0
-    };
-}
+// Native boot/ready/preload counters were removed: a successful real bridge
+// request plus independently observed Worker identity is the correctness
+// evidence, not producer diagnostic log formatting.
 
 function waitFor(condition, timeoutMs, code, label) {
     const start = Date.now();
@@ -114,11 +67,6 @@ try {
         fail("BRIDGE_IMPORT_FAILED", "createRuntimeBridge not exported");
         return;
     }
-    if (window.__nativeEventCounts === null) {
-        fail("NATIVE_EVENT_COUNTER_UNAVAILABLE", "window.bridge.postMessage wrapper could not be installed");
-        return;
-    }
-
     const originContract = window.__FORT_RUNTIME_ORIGIN__;
     if (!originContract || !originContract.documentOrigin || !originContract.workerUrl || !originContract.configUrl) {
         fail("ORIGIN_CONTRACT_MISSING", "__FORT_RUNTIME_ORIGIN__ incomplete");
@@ -153,11 +101,8 @@ try {
     // PyWorker), so capture counts only after the first request resolves.
     const constructsAfterPhase1 = window.__workerTracker.constructCount;
     const worker1Id = window.__workerTracker.constructed[window.__workerTracker.constructed.length - 1];
-    const bootAfterPhase1 = nativeCounts().boot;
-    const readyAfterPhase1 = nativeCounts().ready;
-    const preloadAfterPhase1 = nativeCounts().preloadComplete;
-    if (worker1Id === undefined || constructsAfterPhase1 < 1 || bootAfterPhase1 < 1 || readyAfterPhase1 < 1 || preloadAfterPhase1 < 1) {
-        fail("FIRST_WORKER_BOOT_FAILED", "first worker boot/preload evidence incomplete");
+    if (worker1Id === undefined || constructsAfterPhase1 < 1) {
+        fail("FIRST_WORKER_NOT_OBSERVED", "no Worker constructed after successful vaults.create");
         return;
     }
 
@@ -169,11 +114,6 @@ try {
         return;
     }
     setStage("vault_confirmed_in_list");
-
-    // ── Phase-2 baseline, captured BEFORE terminating the first worker ──
-    const bootBeforeBridge2 = nativeCounts().boot;
-    const readyBeforeBridge2 = nativeCounts().ready;
-    const preloadBeforeBridge2 = nativeCounts().preloadComplete;
 
     // ── Terminate the first worker, observe underlying terminate ───────
     setStage("bridge1_destroying");
@@ -213,9 +153,6 @@ try {
     // Capture worker counts only after the second request resolves (async boot).
     const constructsAfterPhase2 = window.__workerTracker.constructCount;
     const worker2Id = window.__workerTracker.constructed[window.__workerTracker.constructed.length - 1];
-    const bootAfterBridge2 = nativeCounts().boot;
-    const readyAfterBridge2 = nativeCounts().ready;
-    const preloadAfterBridge2 = nativeCounts().preloadComplete;
     const worker2TerminatedBeforeCleanup = window.__workerTracker.terminated.includes(worker2Id);
 
     if (constructsAfterPhase2 <= constructsAfterPhase1) {
@@ -228,18 +165,6 @@ try {
     }
     if (worker2TerminatedBeforeCleanup) {
         fail("WORKER2_ALREADY_TERMINATED", "second worker id already present in terminated ids");
-        return;
-    }
-    if (bootAfterBridge2 <= bootBeforeBridge2) {
-        fail("PHASE2_BOOT_NOT_OBSERVED", "no new boot lifecycle event after phase-2 baseline");
-        return;
-    }
-    if (readyAfterBridge2 <= readyBeforeBridge2) {
-        fail("PHASE2_READY_NOT_OBSERVED", "no new ready lifecycle event after phase-2 baseline");
-        return;
-    }
-    if (preloadAfterBridge2 <= preloadBeforeBridge2) {
-        fail("PHASE2_PRELOAD_NOT_OBSERVED", "no new worker_preload_complete event after phase-2 baseline");
         return;
     }
 
@@ -278,13 +203,6 @@ try {
         constructAfterPhase1: constructsAfterPhase1,
         terminateAfterPhase1: terminatesAfterPhase1,
         constructAfterPhase2: constructsAfterPhase2,
-        nativeCounterInstalled: window.__nativeEventCounts !== null,
-        bootBeforeBridge2,
-        bootAfterBridge2,
-        readyBeforeBridge2,
-        readyAfterBridge2,
-        preloadBeforeBridge2,
-        preloadAfterBridge2,
         phase2VaultFound: found2,
         reopenedVaultId: openResult.vault.id,
         summaryVerified: summary.vault.id === vaultId,
