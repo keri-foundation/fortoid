@@ -56,6 +56,9 @@ jobs:
       - name: Prepare canonical FortWeb runtime
         uses: ./.github/actions/prepare-fortweb-runtime
 
+      - name: Validate exact locked FortWeb requirements compatibility
+        run: node tools/validate-runtime-requirements-compatibility.mjs
+
       - name: Reject stale artifacts
         shell: bash
         run: |

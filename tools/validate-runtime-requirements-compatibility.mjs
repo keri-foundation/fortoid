@@ -223,36 +223,46 @@ const FORBIDDEN_PREDICATES = {
 
 // ── Validation ──────────────────────────────────────────────────────────────
 
+function _compatFailure(errors) {
+  const list = Array.isArray(errors) ? errors : [errors];
+  return {
+    compatible: false,
+    errors: list,
+    capabilities: [],
+    forbidden_behaviors: [],
+  };
+}
+
 export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, configPath = CONFIG_PATH) {
   const errors = [];
 
   // 1. Read manifest
   const mfPath = path.join(payloadDir, MANIFEST_FILENAME);
-  if (!existsSync(mfPath)) return [{ type: 'error', message: `manifest.json not found at ${mfPath}` }];
+  if (!existsSync(mfPath)) return _compatFailure({ type: 'error', message: `manifest.json not found at ${mfPath}` });
 
   let manifest;
   try {
     const mfBytes = await readFile(mfPath);
     const mfText = new TextDecoder('utf-8', { fatal: true }).decode(mfBytes);
     manifest = JSON.parse(mfText);
-  } catch (e) { return [{ type: 'error', message: `manifest.json: ${e.message}` }]; }
+  } catch (e) { return _compatFailure({ type: 'error', message: `manifest.json: ${e.message}` }); }
 
   // 2. Discover requirements path
   const rrRel = manifest?.contracts?.runtime_requirements?.path;
-  if (!rrRel) return [{ type: 'error', message: 'manifest.contracts.runtime_requirements.path: missing' }];
-  if (rrRel !== EXPECTED_RR_PATH) return [{ type: 'error', message: `unexpected requirements path: "${rrRel}" (expected "${EXPECTED_RR_PATH}")` }];
+  if (!rrRel) return _compatFailure({ type: 'error', message: 'manifest.contracts.runtime_requirements.path: missing' });
+  if (rrRel !== EXPECTED_RR_PATH) return _compatFailure({ type: 'error', message: `unexpected requirements path: "${rrRel}" (expected "${EXPECTED_RR_PATH}")` });
 
   // 3. Read requirements
   const rrPath = path.join(payloadDir, rrRel);
-  if (!existsSync(rrPath)) return [{ type: 'error', message: `requirements file not found: ${rrRel}` }];
+  if (!existsSync(rrPath)) return _compatFailure({ type: 'error', message: `requirements file not found: ${rrRel}` });
 
   let rr;
   try {
     const rrBytes = await readFile(rrPath);
     const rrText = new TextDecoder('utf-8', { fatal: true }).decode(rrBytes);
-    if (rrText.includes('\uFFFD')) return [{ type: 'error', message: 'runtime-requirements.json: contains U+FFFD' }];
+    if (rrText.includes('\uFFFD')) return _compatFailure({ type: 'error', message: 'runtime-requirements.json: contains U+FFFD' });
     rr = JSON.parse(rrText);
-  } catch (e) { return [{ type: 'error', message: `runtime-requirements.json: ${e.message}` }]; }
+  } catch (e) { return _compatFailure({ type: 'error', message: `runtime-requirements.json: ${e.message}` }); }
 
   if (!rr.schema || rr.schema !== EXPECTED_SCHEMA) {
     errors.push({ type: 'error', message: `unsupported requirements schema: "${rr.schema || '(missing)'}"` });
@@ -266,18 +276,18 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
   if (!rr.payload_profile || rr.payload_profile !== EXPECTED_PROFILE) {
     errors.push({ type: 'error', message: `unsupported payload profile: "${rr.payload_profile || '(missing)'}"` });
   }
-  if (errors.length) return errors;
+  if (errors.length) return _compatFailure(errors);
 
   // 4. Read platform config
-  if (!existsSync(configPath)) return [{ type: 'error', message: `platform config not found at ${configPath}` }];
+  if (!existsSync(configPath)) return _compatFailure({ type: 'error', message: `platform config not found at ${configPath}` });
 
   let config;
   try {
     const cfgBytes = await readFile(configPath);
     const cfgText = new TextDecoder('utf-8', { fatal: true }).decode(cfgBytes);
-    if (cfgText.includes('\uFFFD')) return [{ type: 'error', message: 'runtime-platform-config.json: contains U+FFFD' }];
+    if (cfgText.includes('\uFFFD')) return _compatFailure({ type: 'error', message: 'runtime-platform-config.json: contains U+FFFD' });
     config = JSON.parse(cfgText);
-  } catch (e) { return [{ type: 'error', message: `runtime-platform-config.json: ${e.message}` }]; }
+  } catch (e) { return _compatFailure({ type: 'error', message: `runtime-platform-config.json: ${e.message}` }); }
 
   if (!config.schema || config.schema !== CONFIG_SCHEMA) {
     errors.push({ type: 'error', message: `unsupported config schema: "${config.schema || '(missing)'}"` });
@@ -285,13 +295,13 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
   if (!config.platform || config.platform !== 'android-webview') {
     errors.push({ type: 'error', message: `unexpected platform: "${config.platform || '(missing)'}"` });
   }
-  if (errors.length) return errors;
+  if (errors.length) return _compatFailure(errors);
 
   // 5. Check requirements-compatibility declaration
   const rc = config.requirements_compatibility;
   if (!rc) {
     errors.push({ type: 'error', message: 'requirements_compatibility: missing' });
-    return errors;
+    return _compatFailure(errors);
   }
   if (!rc.supported_schemas?.includes(EXPECTED_SCHEMA)) {
     errors.push({ type: 'error', message: `requirements_compatibility.supported_schemas does not include "${EXPECTED_SCHEMA}"` });
@@ -303,7 +313,7 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
   // 6. Evaluate capability predicates
   const capabilities = rr.capabilities;
   if (!capabilities || typeof capabilities !== 'object') {
-    return [{ type: 'error', message: 'runtime-requirements.json: capabilities missing or not an object' }];
+    return _compatFailure({ type: 'error', message: 'runtime-requirements.json: capabilities missing or not an object' });
   }
 
   const capResults = [];
@@ -345,7 +355,7 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
   // 7. Evaluate forbidden-behavior predicates
   const forbidden = rr.forbidden_behaviors;
   if (!Array.isArray(forbidden)) {
-    return [{ type: 'error', message: 'runtime-requirements.json: forbidden_behaviors missing or not an array' }];
+    return _compatFailure({ type: 'error', message: 'runtime-requirements.json: forbidden_behaviors missing or not an array' });
   }
 
   // Duplicate detection
@@ -356,7 +366,7 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
     fbSeen.add(fb);
   }
   if (fbDups.length) {
-    return [{ type: 'error', message: `forbidden_behaviors contains duplicates: ${fbDups.join(', ')}` }];
+    return _compatFailure({ type: 'error', message: `forbidden_behaviors contains duplicates: ${fbDups.join(', ')}` });
   }
 
   const fbResults = [];

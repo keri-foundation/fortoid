@@ -68,8 +68,10 @@ after(async () => { await rm(FIXTURE_DIR, { recursive: true, force: true }).catc
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('validateCompatibility — structural', () => {
-  it('1. actual pinned FortWeb requirements produce evidence-backed result', async () => {
-    const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
+  it('1. complete canonical v1 requirements fixture produces evidence-backed result', async () => {
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    const { dir } = await stageFixture('evidence-backed', {}, cfg);
+    const r = await validateCompatibility(dir, path.join(dir, 'runtime-platform-config.json'));
     assert.ok(typeof r.compatible === 'boolean');
     assert.ok(Array.isArray(r.capabilities));
     assert.ok(Array.isArray(r.forbidden_behaviors));
@@ -255,24 +257,30 @@ describe('validateCompatibility — capabilities', () => {
     assert.ok(unk.reason.includes('unknown') || unk.reason.includes('no predicate'));
   });
 
-  it('18. persistent_storage_partition is PROVEN', async () => {
-    const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
+  it('18. persistent_storage_partition is PROVEN for canonical fixture', async () => {
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    const { dir } = await stageFixture('psp-proven', {}, cfg);
+    const r = await validateCompatibility(dir, path.join(dir, 'runtime-platform-config.json'));
     const psp = r.capabilities?.find(c => c.capability === 'persistent_storage_partition');
     assert.ok(psp, 'persistent_storage_partition must exist');
     assert.ok(psp.compatible, 'must be SATISFIED');
     assert.ok(psp.evidence === 'HOSTED PROVEN', `expected HOSTED PROVEN, got ${psp.evidence}`);
   });
 
-  it('19. worker_availability is PROVEN', async () => {
-    const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
+  it('19. worker_availability is PROVEN for canonical fixture', async () => {
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    const { dir } = await stageFixture('wa-proven', {}, cfg);
+    const r = await validateCompatibility(dir, path.join(dir, 'runtime-platform-config.json'));
     const wa = r.capabilities?.find(c => c.capability === 'worker_availability');
     assert.ok(wa, 'worker_availability must exist');
     assert.ok(wa.compatible, 'must be SATISFIED');
     assert.ok(wa.evidence === 'HOSTED PROVEN', `expected HOSTED PROVEN, got ${wa.evidence}`);
   });
 
-  it('20. no_fallback_shell_substitution is SATISFIED with fallback:none', async () => {
-    const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
+  it('20. no_fallback_shell_substitution is SATISFIED for canonical fixture', async () => {
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    const { dir } = await stageFixture('nfs-satisfied', {}, cfg);
+    const r = await validateCompatibility(dir, path.join(dir, 'runtime-platform-config.json'));
     const nf = r.capabilities?.find(c => c.capability === 'no_fallback_shell_substitution');
     assert.ok(nf, 'no_fallback_shell_substitution must exist');
     assert.ok(nf.compatible, 'must be SATISFIED with fallback:none');
@@ -309,8 +317,10 @@ describe('validateCompatibility — forbidden behaviors', () => {
     assert.ok(!unk.compatible, 'must fail');
   });
 
-  it('22. service_worker_registration requires host prohibition', async () => {
-    const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
+  it('22. service_worker_registration requires host prohibition for canonical fixture', async () => {
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    const { dir } = await stageFixture('sw-prohibited', {}, cfg);
+    const r = await validateCompatibility(dir, path.join(dir, 'runtime-platform-config.json'));
     const sw = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'service_worker_registration');
     assert.ok(sw, 'service_worker_registration must be evaluated');
     assert.ok(sw.compatible, 'service_worker_registration must be SATISFIED by explicit host prohibition');
@@ -388,9 +398,11 @@ describe('validateCompatibility — edge cases', () => {
     assert.ok(errs.some(e => e.message.includes('forbidden_behaviors')));
   });
 
-  it('26. overall result is COMPATIBLE (all gaps resolved)', async () => {
-    const r = await validateCompatibility(path.join(REPO_ROOT, 'app/src/main/assets/payload'));
-    assert.strictEqual(r.compatible, true, 'must be COMPATIBLE — all prior UNPROVEN gaps are now PROVEN');
+  it('26. overall result is COMPATIBLE for canonical fixture', async () => {
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    const { dir } = await stageFixture('overall-compatible', {}, cfg);
+    const r = await validateCompatibility(dir, path.join(dir, 'runtime-platform-config.json'));
+    assert.strictEqual(r.compatible, true, 'must be COMPATIBLE — all canonical requirements are satisfied');
     // all 10 capabilities SATISFIED
     const satCaps = r.capabilities.filter(c => c.compatible).length;
     assert.ok(satCaps >= 10, `expected >=10 SATISFIED capabilities, got ${satCaps}`);
