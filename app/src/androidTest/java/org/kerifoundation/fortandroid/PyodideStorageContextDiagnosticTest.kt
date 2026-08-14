@@ -11,7 +11,6 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import org.junit.After
-import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,8 +25,10 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * This test PASSES when a complete structured diagnostic is captured (state
  * "done"), even when the measured result reports storage as missing. It FAILS
- * only when the diagnostic itself could not run (worker did not boot, result
- * never arrived, or canonical PyScript assets could not load).
+ * with a structured category/stage/message when the diagnostic reaches a
+ * terminal "error" state (transport succeeded, probe hit an actionable error).
+ * It FAILS as "never reached a terminal state" only when observability itself
+ * did not work (no page result was ever observable).
  *
  * Evidence classification: ANDROID_PYWORKER_STORAGE_CONTEXT
  */
@@ -129,13 +130,16 @@ class PyodideStorageContextDiagnosticTest {
             wv.loadUrl("$TRUSTED_ORIGIN/android-pyworker-storage-context-probe/index.html")
         }
 
-        // Poll the page global for a terminal diagnostic state.
+        // Poll the page global directly for a terminal diagnostic state. Match
+        // the ServiceWorkerProhibitionProofTest precedent: evaluate the object
+        // expression (not JSON.stringify(...), whose string result comes back
+        // double-encoded and is then misparsed as "loading").
         while (SystemClock.elapsedRealtime() < deadline) {
             val latch = CountDownLatch(1)
             val sample = AtomicReference<String>()
             scenario.onActivity { activity ->
                 activity.webView.evaluateJavascript(
-                    "JSON.stringify(window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__ || {state:'loading'})"
+                    "window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__"
                 ) { raw ->
                     sample.set(raw)
                     latch.countDown()
@@ -160,20 +164,37 @@ class PyodideStorageContextDiagnosticTest {
         Log.i(TAG, "DIAGNOSTIC_RESULT $result")
 
         val state = parseState(result)
-        assertTrue(
-            "diagnostic did not complete (state=$state): $result",
-            state == "done"
-        )
+        when (state) {
+            "done" -> Log.i(TAG, "DIAGNOSTIC_TERMINAL state=done")
+            "error" -> {
+                val category = fieldOf(result, "category")
+                val stage = fieldOf(result, "stage")
+                val message = fieldOf(result, "message")
+                fail(
+                    "diagnostic reached terminal error state (category=$category stage=$stage): $message"
+                )
+            }
+            else -> fail("diagnostic did not reach a terminal state (state=$state): $result")
+        }
     }
 
     private fun parseState(raw: String?): String {
-        if (raw == null) return "loading"
-        val trimmed = raw.trim()
-        if (!trimmed.startsWith("{")) return "loading"
+        val trimmed = raw?.trim() ?: return "loading"
+        if (trimmed.isEmpty() || trimmed == "null" || trimmed == "undefined") return "loading"
         return try {
             org.json.JSONObject(trimmed).optString("state", "loading")
         } catch (_: Exception) {
             "loading"
+        }
+    }
+
+    private fun fieldOf(raw: String?, key: String): String {
+        val trimmed = raw?.trim() ?: return "unknown"
+        return try {
+            val obj = org.json.JSONObject(trimmed)
+            if (obj.has(key) && !obj.isNull(key)) obj.getString(key) else "unknown"
+        } catch (_: Exception) {
+            "unknown"
         }
     }
 }
