@@ -117,6 +117,7 @@ runs:
       run: |
         set -euo pipefail
         rm -rf .tmp/runtime-packages
+        mkdir -p .tmp/runtime-packages
         npm run package:runtime -- \
           --runtime-dir dist/runtime \
           --python python3 \
