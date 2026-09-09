@@ -120,6 +120,7 @@ runs:
         npm run package:runtime -- \
           --runtime-dir dist/runtime \
           --python python3 \
+          --ref refs/heads/pyodide-314-runtime \
           --output-dir .tmp/runtime-packages
 
     - name: Select canonical runtime ZIP
