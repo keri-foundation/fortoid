@@ -84,7 +84,7 @@ private const val PAYLOAD_ASSET_PREFIX = "payload/"
 private const val PAYLOAD_INDEX_ASSET_PATH = "payload/app/index.html"
 private const val PYODIDE_CDN_HOST = "cdn.jsdelivr.net"
 private const val PYODIDE_CDN_PATH_PREFIX = "/pyodide/v"
-private const val BUNDLED_PYODIDE_VERSION = "0.29.3"
+private const val BUNDLED_PYODIDE_VERSION = "314.0.5"
 
 internal object WebRequestPolicy {
     internal fun isTrustedPayloadParts(scheme: String?, host: String?, path: String?): Boolean {
