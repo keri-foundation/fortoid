@@ -72,18 +72,55 @@ runs:
       working-directory: .deps/fortweb
       run: npm ci
 
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Acquire reviewed runtime source
+      shell: bash
+      working-directory: .deps/fortweb
+      env:
+        FORTWEB_RUNTIME_SOURCE_URL: https://github.com/keri-foundation/fortweb/releases/download/runtime-source-pyodide-314-20260909/runtime-source.tar.gz
+        FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256: e04833249eec88596e0f2f88d32baa6d5fae6b2e964996587061ddac4bd78c72
+        FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 87bcc689d7778840a76284471ff599cef21be41df2b429724f7f4fdc5f022135
+      run: |
+        python3 scripts/acquire_runtime_source.py \
+          --url "$FORTWEB_RUNTIME_SOURCE_URL" \
+          --sha256 "$FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256" \
+          --manifest-sha256 "$FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256" \
+          --output build/runtime-source
+
+    - name: Install verified Python build tools
+      shell: bash
+      working-directory: .deps/fortweb
+      run: |
+        python3 -m pip install --disable-pip-version-check --no-index --no-deps \
+          build/runtime-source/wheelhouse/packaging-26.1-py3-none-any.whl \
+          build/runtime-source/wheelhouse/setuptools-83.0.0-py3-none-any.whl \
+          build/runtime-source/wheelhouse/wheel-0.47.0-py3-none-any.whl
+
     - name: Build FortWeb runtime
       shell: bash
       working-directory: .deps/fortweb
+      env:
+        FORTWEB_RUNTIME_SOURCE_MANIFEST: build/runtime-source/manifest.json
+        FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 87bcc689d7778840a76284471ff599cef21be41df2b429724f7f4fdc5f022135
       run: npm run build:runtime
 
     - name: Generate canonical runtime ZIP
       shell: bash
       working-directory: .deps/fortweb
+      env:
+        FORTWEB_RUNTIME_SOURCE_MANIFEST: build/runtime-source/manifest.json
+        FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 87bcc689d7778840a76284471ff599cef21be41df2b429724f7f4fdc5f022135
       run: |
         set -euo pipefail
         rm -rf .tmp/runtime-packages
-        node tools/package-runtime.mjs
+        npm run package:runtime -- \
+          --runtime-dir dist/runtime \
+          --python python3 \
+          --output-dir .tmp/runtime-packages
 
     - name: Select canonical runtime ZIP
       id: zip
