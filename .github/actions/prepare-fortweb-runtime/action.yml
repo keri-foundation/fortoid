@@ -116,8 +116,10 @@ runs:
         FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 87bcc689d7778840a76284471ff599cef21be41df2b429724f7f4fdc5f022135
       run: |
         set -euo pipefail
+        # package:runtime creates the output dir itself (non-recursive mkdir),
+        # so ensure the parent exists and the output dir does not.
+        mkdir -p .tmp
         rm -rf .tmp/runtime-packages
-        mkdir -p .tmp/runtime-packages
         npm run package:runtime -- \
           --runtime-dir dist/runtime \
           --python python3 \
