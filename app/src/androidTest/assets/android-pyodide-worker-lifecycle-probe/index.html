@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Pyodide Vault Lifecycle Probe</title>
+<script type="module">
+// Report results through a pollable global. Every stage transition is preserved.
+window.__vaultLifecycleResult = { state: "loading", stage: "probe_started" };
+
+function setStage(s) { window.__vaultLifecycleResult.stage = s; }
+function fail(category, message) {
+    window.__vaultLifecycleResult = {
+        state: "error", category, message,
+        stage: window.__vaultLifecycleResult.stage
+    };
+}
+
+// ── 1. Install test-only Worker tracker BEFORE any producer import ──────
+(function installWorkerTracker() {
+    const NativeWorker = globalThis.Worker;
+    if (!NativeWorker) {
+        fail("WORKER_TRACKER_INSTALL_FAILED", "globalThis.Worker unavailable");
+        return;
+    }
+    window.__workerTracker = {
+        constructCount: 0,
+        terminateCount: 0,
+        constructed: [],
+        terminated: []
+    };
+    globalThis.Worker = class TrackedWorker extends NativeWorker {
+        constructor(...args) {
+            super(...args);
+            this.__trackedId = ++window.__workerTracker.constructCount;
+            window.__workerTracker.constructed.push(this.__trackedId);
+        }
+        terminate() {
+            window.__workerTracker.terminateCount++;
+            window.__workerTracker.terminated.push(this.__trackedId || 0);
+            return super.terminate();
+        }
+    };
+})();
+
+// Native boot/ready/preload counters were removed: a successful real bridge
+// request plus independently observed Worker identity is the correctness
+// evidence, not producer diagnostic log formatting.
+
+function waitFor(condition, timeoutMs, code, label) {
+    const start = Date.now();
+    return new Promise((resolve, reject) => {
+        (function poll() {
+            if (condition()) { resolve(); return; }
+            if (Date.now() - start > timeoutMs) {
+                reject(Object.assign(new Error(label + " timed out"), { code }));
+                return;
+            }
+            setTimeout(poll, 100);
+        })();
+    });
+}
+
+(async function run() {
+try {
+    setStage("importing_bridge");
+    const bridgeModule = await import("/app/runtime/bridge.js");
+    setStage("bridge_imported");
+    if (!bridgeModule.createRuntimeBridge) {
+        fail("BRIDGE_IMPORT_FAILED", "createRuntimeBridge not exported");
+        return;
+    }
+    const originContract = window.__FORT_RUNTIME_ORIGIN__;
+    if (!originContract || !originContract.documentOrigin || !originContract.workerUrl || !originContract.configUrl) {
+        fail("ORIGIN_CONTRACT_MISSING", "__FORT_RUNTIME_ORIGIN__ incomplete");
+        return;
+    }
+    setStage("origin_contract_validated");
+
+    const alias = "android-lifecycle-" + (
+        typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : String(Date.now()) + "-" + String(Math.floor(Math.random() * 1e6))
+    );
+
+    // ── Phase 1: first bridge + worker ─────────────────────────────────
+    setStage("bridge1_creating");
+    const bridge1 = bridgeModule.createRuntimeBridge({
+        workerUrl: originContract.workerUrl,
+        configUrl: originContract.configUrl,
+        runtimeOriginContract: originContract,
+    });
+    setStage("bridge1_created");
+
+    setStage("vault_creating");
+    const createResult = await bridge1.request("vaults.create", { name: alias });
+    const vaultId = createResult && createResult.vault && createResult.vault.id;
+    if (!vaultId) {
+        fail("VAULT_CREATE_RESPONSE_INVALID", "vaults.create returned no vault id");
+        return;
+    }
+    setStage("vault_created");
+    // Worker construction is asynchronous (bridge boot awaits config fetch +
+    // PyWorker), so capture counts only after the first request resolves.
+    const constructsAfterPhase1 = window.__workerTracker.constructCount;
+    const worker1Id = window.__workerTracker.constructed[window.__workerTracker.constructed.length - 1];
+    if (worker1Id === undefined || constructsAfterPhase1 < 1) {
+        fail("FIRST_WORKER_NOT_OBSERVED", "no Worker constructed after successful vaults.create");
+        return;
+    }
+
+    setStage("vault_listing_phase1");
+    const list1 = await bridge1.request("vaults.list", {});
+    const found1 = (list1 && list1.vaults || []).some(v => v.id === vaultId);
+    if (!found1) {
+        fail("VAULT_NOT_FOUND_AFTER_CREATE", "created vault missing from vaults.list");
+        return;
+    }
+    setStage("vault_confirmed_in_list");
+
+    // ── Terminate the first worker, observe underlying terminate ───────
+    setStage("bridge1_destroying");
+    const beforeTerminate = window.__workerTracker.terminateCount;
+    bridge1.destroy();
+    await waitFor(
+        () => window.__workerTracker.terminateCount > beforeTerminate,
+        20000,
+        "WORKER_TERMINATION_NOT_OBSERVED",
+        "worker termination"
+    );
+    const terminatesAfterPhase1 = window.__workerTracker.terminateCount;
+    if (!window.__workerTracker.terminated.includes(worker1Id)) {
+        fail("WORKER1_NOT_TERMINATED", "first worker id not present in terminated ids");
+        return;
+    }
+    setStage("worker1_terminated");
+
+    // ── Phase 2: genuinely new bridge + worker ─────────────────────────
+    setStage("bridge2_creating");
+    const bridge2 = bridgeModule.createRuntimeBridge({
+        workerUrl: originContract.workerUrl,
+        configUrl: originContract.configUrl,
+        runtimeOriginContract: originContract,
+    });
+    setStage("bridge2_created");
+
+    setStage("vault_listing_phase2");
+    const list2 = await bridge2.request("vaults.list", {});
+    const found2 = (list2 && list2.vaults || []).some(v => v.id === vaultId);
+    if (!found2) {
+        fail("VAULT_NOT_PERSISTED_AFTER_TERMINATION", "created vault missing from vaults.list after worker termination");
+        return;
+    }
+    setStage("persisted_vault_found");
+
+    // Capture worker counts only after the second request resolves (async boot).
+    const constructsAfterPhase2 = window.__workerTracker.constructCount;
+    const worker2Id = window.__workerTracker.constructed[window.__workerTracker.constructed.length - 1];
+    const worker2TerminatedBeforeCleanup = window.__workerTracker.terminated.includes(worker2Id);
+
+    if (constructsAfterPhase2 <= constructsAfterPhase1) {
+        fail("SECOND_WORKER_NOT_DISTINCT", "no new Worker constructed after termination");
+        return;
+    }
+    if (worker2Id === undefined || worker2Id <= worker1Id) {
+        fail("SECOND_WORKER_NOT_DISTINCT", "second worker id not greater than first worker id");
+        return;
+    }
+    if (worker2TerminatedBeforeCleanup) {
+        fail("WORKER2_ALREADY_TERMINATED", "second worker id already present in terminated ids");
+        return;
+    }
+
+    setStage("vault_reopening");
+    const openResult = await bridge2.request("vaults.open", { vaultId });
+    if (!openResult || !openResult.vault || openResult.vault.id !== vaultId) {
+        fail("VAULT_REOPEN_IDENTITY_MISMATCH", "vaults.open returned a different or missing vault id");
+        return;
+    }
+    setStage("vault_reopened");
+
+    setStage("vault_summary_verifying");
+    const summary = await bridge2.request("vaults.summary", { vaultId });
+    if (!summary || !summary.vault || summary.vault.id !== vaultId) {
+        fail("VAULT_SUMMARY_FAILED", "vaults.summary did not confirm the reopened vault");
+        return;
+    }
+    setStage("vault_summary_verified");
+
+    setStage("vault_closing");
+    await bridge2.request("vaults.close", { vaultId });
+    setStage("vault_closed");
+
+    bridge2.destroy();
+
+    window.__vaultLifecycleResult = {
+        state: "done",
+        stage: "done",
+        vaultId,
+        vaultAlias: alias,
+        worker1Id,
+        worker2Id,
+        worker1Terminated: true,
+        worker2Distinct: worker2Id > worker1Id,
+        worker2Untainted: !worker2TerminatedBeforeCleanup,
+        constructAfterPhase1: constructsAfterPhase1,
+        terminateAfterPhase1: terminatesAfterPhase1,
+        constructAfterPhase2: constructsAfterPhase2,
+        phase2VaultFound: found2,
+        reopenedVaultId: openResult.vault.id,
+        summaryVerified: summary.vault.id === vaultId,
+        origin: location.origin,
+        isSecureContext: window.isSecureContext || false,
+    };
+} catch (e) {
+    fail(e && e.code ? e.code : "PROBE_ERROR", e && e.message ? e.message : String(e));
+}
+})();
+
+// Safety timeout: fail if probe never reaches terminal state.
+setTimeout(() => {
+    if (window.__vaultLifecycleResult.state === "loading") {
+        fail("PROBE_TIMEOUT", "probe did not reach terminal state");
+    }
+}, 300000);
+</script>

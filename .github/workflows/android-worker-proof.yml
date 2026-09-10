@@ -1,0 +1,142 @@
+name: Android API 36 Worker Proof
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: android-worker-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  worker-proof:
+    name: Android API 36 worker proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out Fortoid
+        uses: actions/checkout@v4
+
+      - name: Prepare canonical FortWeb runtime
+        uses: ./.github/actions/prepare-fortweb-runtime
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM for hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm || echo "KVM not available"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+
+      - name: Install system image and create AVD
+        run: |
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "=== Available device profiles ==="
+          avdmanager list device | grep -E '^id:|Name:|OEM '
+          echo "=== Requiring pixel_8 ==="
+          if ! avdmanager list device | grep -q 'id:.*pixel_8'; then
+            echo "FAIL: pixel_8 not found in device catalog"
+            avdmanager list device
+            exit 1
+          fi
+          echo "y" | sdkmanager "system-images;android-36;google_apis;x86_64"
+          echo "no" | avdmanager create avd \
+            --name "worker-test" \
+            --package "system-images;android-36;google_apis;x86_64" \
+            --device "pixel_8" \
+            --force
+          echo "=== Created AVDs ==="
+          $ANDROID_HOME/emulator/emulator -list-avds
+          if ! $ANDROID_HOME/emulator/emulator -list-avds | grep -q 'worker-test'; then
+            echo "FAIL: AVD worker-test was not created"
+            exit 1
+          fi
+
+      - name: Record emulator configuration
+        run: |
+          echo "API level: 36"
+          echo "ABI: x86_64"
+          echo "System image: google_apis"
+          echo "Device profile: pixel_8"
+          echo "Baseline: API 36 WebView (not Pixel 9 or Galaxy S26 hardware proof)"
+
+      - name: Start emulator
+        timeout-minutes: 8
+        run: |
+          $ANDROID_HOME/emulator/emulator \
+            -avd worker-test \
+            -no-window \
+            -no-audio \
+            -no-boot-anim \
+            -gpu swiftshader_indirect \
+            -read-only \
+            -delay-adb \
+            &
+          adb wait-for-device
+          adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+          adb shell input keyevent 82
+          echo "Emulator ready"
+
+      - name: Record device and WebView identity
+        run: |
+          echo "=== Device ==="
+          adb shell getprop ro.product.model || echo "model N/A"
+          adb shell getprop ro.product.device || echo "device N/A"
+          adb shell getprop ro.build.version.release || echo "release N/A"
+          adb shell getprop ro.build.version.sdk || echo "sdk N/A"
+          adb shell getprop ro.build.fingerprint || echo "fingerprint N/A"
+          echo "=== WebView ==="
+          adb shell dumpsys webviewupdate | grep -E 'Current|version|package' || echo "WebView info N/A"
+          adb shell pm list packages | grep -i webview || echo "No webview packages"
+
+      - name: Verify API 36 WebView baseline
+        run: |
+          SDK=$(adb shell getprop ro.build.version.sdk)
+          if [ "$SDK" != "36" ]; then
+            echo "FAIL: expected SDK 36, got $SDK"
+            exit 1
+          fi
+          echo "SDK level: $SDK — OK"
+          MODEL=$(adb shell getprop ro.product.model)
+          echo "Model: $MODEL"
+          echo "Baseline: API 36 WebView on pixel_8 AVD"
+          echo "This is NOT Pixel 9 or Galaxy S26 hardware proof."
+
+      - name: Build and run instrumentation tests
+        run: ./gradlew :app:connectedDebugAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.WorkerRuntimeProofTest
+
+      - name: Verify worker test JUnit XML
+        if: always()
+        run: |
+          python3 tools/verify-junit-suite.py \
+            --results-dir app/build/outputs/androidTest-results/connected \
+            --suite org.kerifoundation.fortandroid.WorkerRuntimeProofTest \
+            --tests 2
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-proof-reports
+          path: app/build/outputs/androidTest-results/
+          retention-days: 7

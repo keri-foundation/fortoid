@@ -1,0 +1,108 @@
+name: Android JVM
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: android-jvm-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  jvm-tests:
+    name: Android JVM unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Quarantine staged payload
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, shutil
+          source = Path("app/src/main/assets/payload")
+          destination = Path(os.environ["RUNNER_TEMP"]) / "fortoid-staged-payload"
+          if destination.exists():
+              raise SystemExit(f"Unexpected quarantine destination already exists: {destination}")
+          if source.exists():
+              if source.is_symlink() or not source.is_dir():
+                  raise SystemExit(f"Unsafe staged-payload path: {source}")
+              shutil.move(str(source), str(destination))
+          if source.exists():
+              raise SystemExit("Staged payload still exists after quarantine")
+          PY
+
+      - name: Run JVM unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Verify fallback JVM test execution
+        if: always()
+        run: |
+          python3 tools/verify-junit-suite.py \
+            --results-dir app/build/test-results/testDebugUnitTest \
+            --suite org.kerifoundation.fortandroid.PayloadRootPathHandlerTest \
+            --tests 13
+
+  lint:
+    name: Android lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run debug lint
+        run: ./gradlew :app:lintDebug --no-daemon
+
+  instrumentation-compile:
+    name: Android instrumentation compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare canonical FortWeb runtime
+        uses: ./.github/actions/prepare-fortweb-runtime
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile main and androidTest APKs
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon

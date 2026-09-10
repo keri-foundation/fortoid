@@ -6,9 +6,11 @@ import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -18,17 +20,133 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.MimeTypeMap
 import android.widget.FrameLayout
 import android.widget.TextView
+import java.io.ByteArrayInputStream
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.SafeBrowsingResponseCompat
+import androidx.webkit.ServiceWorkerControllerCompat
+import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import java.io.ByteArrayOutputStream
+import org.kerifoundation.fort.bridge.BridgeContract
+import org.json.JSONException
+import org.json.JSONObject
+
+private const val LOG_TAG = "FortAndroid"
+private const val ELLIPSIS = "..."
+private const val MAX_RENDERER_RECOVERY_ATTEMPTS = 1
+private const val MAX_BRIDGE_LOG_VALUE_CHARS = 160
+private const val MAX_BRIDGE_PAYLOAD_CHARS = 4096
+private const val TRUSTED_HOST = "appassets.androidplatform.net"
+private const val TRUSTED_ORIGIN_RULE = "https://appassets.androidplatform.net"
+private const val TRUSTED_PATH_PREFIX = "/"
+private const val TRUSTED_SCHEME = "https"
+
+// Android-owned Service Worker prohibition guard, injected at document-start
+// before producer application JavaScript can register a Service Worker. The
+// runtime contract forbids service_worker_registration; the guard enforces it.
+private const val SERVICE_WORKER_PROHIBITION_MARKER = "__FORT_SW_REGISTRATION_PROHIBITED__"
+private const val SERVICE_WORKER_REJECT_MESSAGE = "Service Worker registration is prohibited by the Android host."
+private val SERVICE_WORKER_PROHIBITION_SCRIPT = """
+    (function () {
+        var installed = false;
+        try {
+            var sw = navigator.serviceWorker;
+            if (sw && typeof sw.register === 'function') {
+                Object.defineProperty(sw, 'register', {
+                    value: function () {
+                        return Promise.reject(new DOMException('$SERVICE_WORKER_REJECT_MESSAGE', 'SecurityError'));
+                    },
+                    writable: false,
+                    configurable: false,
+                    enumerable: false
+                });
+            }
+            installed = true;
+        } catch (e) {
+            installed = false;
+        }
+        window.$SERVICE_WORKER_PROHIBITION_MARKER = installed;
+    })();
+""".trimIndent()
+private const val PAYLOAD_URL = "https://appassets.androidplatform.net/app/index.html"
+private const val PAYLOAD_ASSET_PREFIX = "payload/"
+private const val PAYLOAD_INDEX_ASSET_PATH = "payload/app/index.html"
+private const val PYODIDE_CDN_HOST = "cdn.jsdelivr.net"
+private const val PYODIDE_CDN_PATH_PREFIX = "/pyodide/v"
+private const val BUNDLED_PYODIDE_VERSION = "314.0.5"
+
+internal object WebRequestPolicy {
+    internal fun isTrustedPayloadParts(scheme: String?, host: String?, path: String?): Boolean {
+        return scheme == TRUSTED_SCHEME &&
+            host == TRUSTED_HOST &&
+            path?.startsWith(TRUSTED_PATH_PREFIX) == true
+    }
+
+    fun isTrustedPayloadUri(uri: Uri?): Boolean {
+        return uri != null && isTrustedPayloadParts(uri.scheme, uri.host, uri.path)
+    }
+
+    internal fun isTrustedBridgeParts(scheme: String?, host: String?): Boolean {
+        return scheme == TRUSTED_SCHEME && host == TRUSTED_HOST
+    }
+
+    fun isTrustedBridgeOrigin(uri: Uri?): Boolean {
+        return uri != null && isTrustedBridgeParts(uri.scheme, uri.host)
+    }
+
+    fun shouldBlockSubresource(uri: Uri?, isMainFrame: Boolean): Boolean {
+        if (isTrustedPayloadUri(uri)) {
+            return false
+        }
+
+        return !isMainFrame
+    }
+
+    internal fun shouldOpenExternallyParts(scheme: String?, host: String?, path: String?): Boolean {
+        if (isTrustedPayloadParts(scheme, host, path)) return false
+
+        return scheme == TRUSTED_SCHEME
+    }
+
+    fun shouldOpenExternally(uri: Uri?): Boolean {
+        if (uri == null) return false
+        return shouldOpenExternallyParts(uri.scheme, uri.host, uri.path)
+    }
+
+    /**
+     * Redirect Pyodide CDN requests to the bundled local copy so the wrapper stays offline.
+     */
+    fun mapPyodideCdnToLocal(uri: Uri?): Uri? {
+        if (uri == null) return null
+        if (uri.scheme != TRUSTED_SCHEME || uri.host != PYODIDE_CDN_HOST) return null
+        val path = uri.path ?: return null
+        if (!path.startsWith(PYODIDE_CDN_PATH_PREFIX)) return null
+
+        val afterPrefix = path.removePrefix(PYODIDE_CDN_PATH_PREFIX)
+        val slashIdx = afterPrefix.indexOf('/')
+        if (slashIdx < 0) return null
+        val remainder = afterPrefix.substring(slashIdx + 1)
+
+        val file = if (remainder.startsWith("full/")) {
+            remainder.removePrefix("full/")
+        } else {
+            remainder
+        }
+
+        return Uri.parse("https://$TRUSTED_HOST/vendor/pyodide/$BUNDLED_PYODIDE_VERSION/$file")
+    }
+}
 
 class MainActivity : AppCompatActivity() {
     private lateinit var rootLayout: FrameLayout
@@ -37,23 +155,26 @@ class MainActivity : AppCompatActivity() {
 
     private var webView: WebView? = null
     private var rendererRecoveryAttempts = 0
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
         rootLayout = findViewById(R.id.main)
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, windowInsets ->
+            val types = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
+            val insets = windowInsets.getInsets(types)
+            view.setPadding(insets.left, insets.top, insets.right, insets.bottom)
+
+            WindowInsetsCompat.Builder(windowInsets)
+                .setInsets(types, Insets.NONE)
+                .build()
+        }
         errorView = findViewById(R.id.error_text)
         assetLoader = WebViewAssetLoader.Builder()
-            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .addPathHandler("/", PayloadRootPathHandler(WebViewAssetLoader.AssetsPathHandler(this)))
             .build()
-
-        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            insets
-        }
 
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             showError(R.string.webview_unsupported_message)
@@ -77,8 +198,111 @@ class MainActivity : AppCompatActivity() {
         webView = freshWebView
 
         if (loadPayload) {
+            if (!prepareRuntimeOriginContract(freshWebView)) {
+                showError(R.string.payload_load_failed)
+                return
+            }
+            if (!prepareServiceWorkerPolicy(freshWebView)) {
+                showError(R.string.payload_load_failed)
+                return
+            }
             freshWebView.loadUrl(PAYLOAD_URL)
         }
+    }
+
+    /**
+     * Loads, decodes, validates, and injects the Android runtime-origin contract.
+     * Returns true only if every step succeeds; false prevents navigation.
+     */
+    private fun prepareRuntimeOriginContract(webView: WebView): Boolean {
+        // Fail closed if document-start JS is unavailable
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            Log.e(LOG_TAG, "DOCUMENT_START_SCRIPT not supported — cannot inject runtime origin")
+            return false
+        }
+
+        val bytes: ByteArray
+        try {
+            val stream = assets.open("android/runtime-origin-contract.json")
+            bytes = ByteArrayOutputStream().use { out ->
+                stream.copyTo(out)
+                out.toByteArray()
+            }
+            stream.close()
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Cannot open runtime-origin contract", e)
+            return false
+        }
+
+        val result = AndroidRuntimeOriginContract.validate(bytes)
+        return when (result) {
+            is AndroidRuntimeOriginContract.Result.Valid -> {
+                val script = "window.__FORT_RUNTIME_ORIGIN__ = ${result.contract.jsonString};"
+                try {
+                    WebViewCompat.addDocumentStartJavaScript(webView, script, setOf(TRUSTED_ORIGIN_RULE))
+                    Log.i(LOG_TAG, "Runtime-origin contract injected successfully")
+                    true
+                } catch (e: Exception) {
+                    Log.e(LOG_TAG, "addDocumentStartJavaScript failed", e)
+                    false
+                }
+            }
+            is AndroidRuntimeOriginContract.Result.Invalid -> {
+                Log.e(LOG_TAG, "Runtime-origin contract validation failed: ${result.reason}")
+                false
+            }
+        }
+    }
+
+    /**
+     * Installs the Android-owned Service Worker prohibition policy before
+     * navigation. Returns true only if the document-start guard was installed;
+     * false prevents navigation (fail closed).
+     *
+     * The runtime contract forbids service_worker_registration. The guard
+     * deterministically rejects navigator.serviceWorker.register(...) and the
+     * native ServiceWorkerWebSettingsCompat flags provide defense-in-depth.
+     */
+    private fun prepareServiceWorkerPolicy(webView: WebView): Boolean {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            Log.e(LOG_TAG, "DOCUMENT_START_SCRIPT not supported — cannot prohibit service worker registration")
+            return false
+        }
+
+        try {
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                SERVICE_WORKER_PROHIBITION_SCRIPT,
+                setOf(TRUSTED_ORIGIN_RULE)
+            )
+            Log.i(LOG_TAG, "Service Worker prohibition guard injected")
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Service Worker prohibition injection failed", e)
+            return false
+        }
+
+        // Native defense-in-depth: deny service-worker network/file/content
+        // access where supported. These do NOT prevent registration by
+        // themselves; the document-start guard is the enforcement boundary.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {
+            try {
+                val settings = ServiceWorkerControllerCompat.getInstance().serviceWorkerWebSettings
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BLOCK_NETWORK_LOADS)) {
+                    settings.blockNetworkLoads = true
+                }
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_FILE_ACCESS)) {
+                    settings.allowFileAccess = false
+                }
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_CONTENT_ACCESS)) {
+                    settings.allowContentAccess = false
+                }
+                Log.i(LOG_TAG, "Service Worker native settings hardened")
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Service Worker native settings unavailable", e)
+            }
+        }
+
+        return true
     }
 
     @Suppress("DEPRECATION")
@@ -92,7 +316,7 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 Gravity.CENTER
             )
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#F7F8F4"))
 
             settings.apply {
                 javaScriptEnabled = true
@@ -109,8 +333,68 @@ class MainActivity : AppCompatActivity() {
             }
 
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+            installBridgeListener(this)
             webViewClient = FortWebViewClient()
+
+            isFocusable = true
+            isFocusableInTouchMode = true
+            requestFocus(View.FOCUS_DOWN)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                setAutoHandwritingEnabled(false)
+            }
+
+            @Suppress("ClickableViewAccessibility")
+            setOnTouchListener { v, event ->
+                if (event.action == MotionEvent.ACTION_DOWN && !v.isFocused) {
+                    v.requestFocus()
+                }
+                false
+            }
         }
+    }
+
+    private fun installBridgeListener(target: WebView) {
+        WebViewCompat.addWebMessageListener(
+            target,
+            BridgeContract.HANDLER_NAME,
+            setOf(TRUSTED_ORIGIN_RULE),
+            object : WebViewCompat.WebMessageListener {
+                override fun onPostMessage(
+                    view: WebView,
+                    message: WebMessageCompat,
+                    sourceOrigin: Uri,
+                    isMainFrame: Boolean,
+                    replyProxy: JavaScriptReplyProxy
+                ) {
+                    if (!isMainFrame || !WebRequestPolicy.isTrustedBridgeOrigin(sourceOrigin)) {
+                        Log.w(
+                            LOG_TAG,
+                            "Rejected bridge message from origin=$sourceOrigin mainFrame=$isMainFrame"
+                        )
+                        return
+                    }
+
+                    if (message.type != WebMessageCompat.TYPE_STRING) {
+                        Log.w(LOG_TAG, "Rejected non-string bridge payload type=${message.type}")
+                        return
+                    }
+
+                    val rawPayload = message.data
+                    if (rawPayload.isNullOrBlank()) {
+                        Log.w(LOG_TAG, "Rejected empty bridge payload")
+                        return
+                    }
+
+                    if (rawPayload.length > MAX_BRIDGE_PAYLOAD_CHARS) {
+                        Log.w(LOG_TAG, "Rejected oversized bridge payload (${rawPayload.length} chars)")
+                        return
+                    }
+
+                    handleBridgeMessage(rawPayload)
+                }
+            }
+        )
     }
 
     private fun handleExternalNavigation(uri: Uri) {
@@ -140,11 +424,148 @@ class MainActivity : AppCompatActivity() {
         target.destroy()
     }
 
-    private fun isTrustedPayloadUri(uri: Uri?): Boolean {
-        return uri != null &&
-            uri.scheme == TRUSTED_SCHEME &&
-            uri.host == TRUSTED_HOST &&
-            uri.path?.startsWith(TRUSTED_PATH_PREFIX) == true
+    private fun createBlockedSubresourceResponse(): WebResourceResponse {
+        return WebResourceResponse(
+            "text/plain",
+            "utf-8",
+            ByteArrayInputStream(ByteArray(0))
+        ).apply {
+            setStatusCodeAndReasonPhrase(403, "Forbidden")
+            responseHeaders = mapOf("Cache-Control" to "no-store")
+        }
+    }
+
+    private fun handleBridgeMessage(rawPayload: String) {
+        val envelope = try {
+            JSONObject(rawPayload)
+        } catch (exception: JSONException) {
+            Log.w(LOG_TAG, "Rejected malformed bridge JSON", exception)
+            return
+        }
+
+        val type = envelope.optString("type")
+        if (type.isBlank()) {
+            Log.w(LOG_TAG, "Rejected bridge payload with missing type")
+            return
+        }
+
+        when (type) {
+            BridgeContract.BRIDGE_LIFECYCLE -> handleLifecycleMessage(envelope)
+
+            BridgeContract.BRIDGE_LOG -> Log.d(
+                LOG_TAG,
+                "bridge log=${boundedLogValue(envelope.optString("message"))}"
+            )
+
+            BridgeContract.BRIDGE_JS_ERROR, BridgeContract.BRIDGE_UNHANDLED_REJECTION -> Log.e(
+                LOG_TAG,
+                "bridge $type=${boundedLogValue(envelope.optString("message"))}"
+            )
+
+            else -> Log.w(LOG_TAG, "Rejected unsupported bridge type=$type")
+        }
+    }
+
+    private fun handleLifecycleMessage(envelope: JSONObject) {
+        val message = envelope.optString("message")
+        Log.i(LOG_TAG, "bridge lifecycle=${boundedLogValue(message)}")
+    }
+
+    private fun boundedLogValue(value: String?, maxLength: Int = MAX_BRIDGE_LOG_VALUE_CHARS): String {
+        if (value.isNullOrBlank()) {
+            return ""
+        }
+
+        return if (value.length <= maxLength) {
+            value
+        } else {
+            value.take(maxLength) + ELLIPSIS
+        }
+    }
+
+    private fun addCrossOriginIsolationHeaders(response: WebResourceResponse): WebResourceResponse {
+        val headers = response.responseHeaders?.toMutableMap() ?: mutableMapOf()
+        headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+        headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        response.responseHeaders = headers
+        return response
+    }
+
+    private fun addCdnRedirectHeaders(response: WebResourceResponse): WebResourceResponse {
+        val headers = response.responseHeaders?.toMutableMap() ?: mutableMapOf()
+        headers["Access-Control-Allow-Origin"] = "*"
+        headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+        response.responseHeaders = headers
+        return response
+    }
+
+    private fun injectAndroidSafeAreaOverrides(target: WebView) {
+        val css = ".lk-dialog-root--sheet { align-items: center; }"
+
+        val js = "(function(){" +
+            "var s=document.createElement('style');" +
+            "s.id='android-safe-area-overrides';" +
+            "s.textContent=${JSONObject.quote(css)};" +
+            "var existing=document.getElementById('android-safe-area-overrides');" +
+            "if(existing)existing.remove();" +
+            "document.head.appendChild(s);" +
+            "})()"
+
+        target.evaluateJavascript(js, null)
+        Log.i(LOG_TAG, "Injected Android CSS overrides (dialog centering)")
+    }
+
+    internal class PayloadRootPathHandler(
+        private val delegate: WebViewAssetLoader.PathHandler
+    ) : WebViewAssetLoader.PathHandler {
+        private val mimeOverrides = mapOf(
+            "js" to "text/javascript",
+            "mjs" to "text/javascript",
+            "css" to "text/css",
+            "json" to "application/json",
+            "wasm" to "application/wasm",
+            "svg" to "image/svg+xml",
+            "toml" to "application/toml",
+            "whl" to "application/zip",
+            "zip" to "application/zip",
+            "py" to "text/plain"
+        )
+
+        // URL path segments whose assets live at payload root (not under payload/app/)
+        private val appStrippedPrefixes = listOf("app/wheels/", "app/vendor/")
+
+        override fun handle(path: String): WebResourceResponse? {
+            val normalizedPath = path.trimStart('/')
+            val assetPath = when {
+                normalizedPath.isEmpty() -> PAYLOAD_INDEX_ASSET_PATH
+                normalizedPath.startsWith(PAYLOAD_ASSET_PREFIX) -> normalizedPath
+                appStrippedPrefixes.any { normalizedPath.startsWith(it) } ->
+                    "$PAYLOAD_ASSET_PREFIX${normalizedPath.removePrefix("app/")}"
+                else -> "$PAYLOAD_ASSET_PREFIX$normalizedPath"
+            }
+
+            delegate.handle(assetPath)?.let { response ->
+                return applyMimeOverride(assetPath, response)
+            }
+
+            return null
+        }
+
+        private fun applyMimeOverride(
+            assetPath: String,
+            response: WebResourceResponse
+        ): WebResourceResponse {
+            val extension = assetPath.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            val expectedMimeType = mimeOverrides[extension]
+                ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+
+            if (!expectedMimeType.isNullOrBlank() && response.mimeType != expectedMimeType) {
+                response.mimeType = expectedMimeType
+            }
+
+            return response
+        }
     }
 
     private inner class FortWebViewClient : WebViewClientCompat() {
@@ -152,7 +573,40 @@ class MainActivity : AppCompatActivity() {
             view: WebView,
             request: WebResourceRequest
         ): WebResourceResponse? {
-            return assetLoader.shouldInterceptRequest(request.url)
+            if (WebRequestPolicy.isTrustedPayloadUri(request.url)) {
+                val response = assetLoader.shouldInterceptRequest(request.url)
+                return response?.let { addCrossOriginIsolationHeaders(it) }
+            }
+
+            val localPyodideUri = WebRequestPolicy.mapPyodideCdnToLocal(request.url)
+            if (localPyodideUri != null) {
+                Log.i(LOG_TAG, "Pyodide CDN redirect: ${request.url.path} -> ${localPyodideUri.path}")
+                val response = assetLoader.shouldInterceptRequest(localPyodideUri)
+                if (response != null) {
+                    return addCdnRedirectHeaders(response)
+                }
+
+                Log.w(
+                    LOG_TAG,
+                    "Missing bundled Pyodide asset for mapped request url=${boundedLogValue(request.url.toString())} local=${boundedLogValue(localPyodideUri.toString())}"
+                )
+                return createBlockedSubresourceResponse()
+            }
+
+            if (WebRequestPolicy.shouldBlockSubresource(request.url, request.isForMainFrame)) {
+                Log.w(
+                    LOG_TAG,
+                    "Blocked off-origin subresource url=${boundedLogValue(request.url.toString())}"
+                )
+                return createBlockedSubresourceResponse()
+            }
+
+            return null
+        }
+
+        override fun onPageFinished(view: WebView, url: String?) {
+            super.onPageFinished(view, url)
+            injectAndroidSafeAreaOverrides(view)
         }
 
         override fun shouldOverrideUrlLoading(
@@ -161,11 +615,11 @@ class MainActivity : AppCompatActivity() {
         ): Boolean {
             val uri = request.url
 
-            if (isTrustedPayloadUri(uri)) {
+            if (WebRequestPolicy.isTrustedPayloadUri(uri)) {
                 return false
             }
 
-            if (uri.scheme == TRUSTED_SCHEME) {
+            if (WebRequestPolicy.shouldOpenExternally(uri)) {
                 handleExternalNavigation(uri)
             }
 
@@ -208,14 +662,5 @@ class MainActivity : AppCompatActivity() {
             attachFreshWebView(loadPayload = true)
             return true
         }
-    }
-
-    private companion object {
-        const val LOG_TAG = "FortAndroid"
-        const val MAX_RENDERER_RECOVERY_ATTEMPTS = 1
-        const val TRUSTED_HOST = "appassets.androidplatform.net"
-        const val TRUSTED_PATH_PREFIX = "/assets/"
-        const val TRUSTED_SCHEME = "https"
-        const val PAYLOAD_URL = "https://appassets.androidplatform.net/assets/payload/index.html"
     }
 }

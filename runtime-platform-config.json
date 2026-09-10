@@ -1,0 +1,42 @@
+{
+  "schema": "fort.runtime-platform-config.v1",
+  "version": 1,
+  "platform": "android-webview",
+  "requirements_compatibility": {
+    "supported_schemas": ["fort.runtime-requirements.v1"],
+    "supported_profiles": ["offline-runtime"]
+  },
+  "origin": {
+    "scheme": "https",
+    "host": "appassets.androidplatform.net",
+    "stability": "fixed-across-launches"
+  },
+  "network": {
+    "policy": "deny-all",
+    "allowed_schemes": ["https"]
+  },
+  "assets": {
+    "source": "application-bundle",
+    "delivery": "webview-asset-loader"
+  },
+  "workers": {
+    "available": true,
+    "framework": "webview-javascript",
+    "service_worker_registration": "prohibited-by-host"
+  },
+  "storage": {
+    "mechanism": "webview-persistent",
+    "partition": "fixed-path-prefix"
+  },
+  "security_context": {
+    "mechanism": "https-tls-like"
+  },
+  "bridge": {
+    "provenance": "main-frame-only",
+    "origin_validation": "exact-scheme-host-match"
+  },
+  "entrypoint": {
+    "source": "deterministic-constant",
+    "fallback": "none"
+  }
+}

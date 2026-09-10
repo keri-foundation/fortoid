@@ -16,3 +16,10 @@ captures/
 .DS_Store
 .cursorignore
 .cursorindexingignore
+
+# Generated FortWeb runtime payload (produced by tools/import-fortweb-runtime-package.mjs)
+/app/src/main/assets/payload/
+
+# Python bytecode/cache
+__pycache__/
+*.py[cod]

@@ -43,6 +43,53 @@ dependencies {
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.webkit)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20231013")
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.uiautomator)
+}
+
+// ── Prepared-payload verification ────────────────────────────────────────────
+// Fails when the canonical FortWeb runtime has not been staged.
+// Unprepared Android Studio launches may use the placeholder; validated
+// Gradle builds require a real payload.
+
+tasks.register("verifyPreparedPayload") {
+    description = "Verify the staged FortWeb runtime payload is present and valid"
+    group = "verification"
+
+    doLast {
+        val payloadDir = file("src/main/assets/payload")
+        val manifestFile = file("src/main/assets/payload/manifest.json")
+        val entryHtml = file("src/main/assets/payload/app/index.html")
+        val mainJs = file("src/main/assets/payload/app/app/main.js")
+        val requirementsContract = file("src/main/assets/payload/contracts/runtime-requirements.json")
+
+        if (!payloadDir.exists()) {
+            throw GradleException(
+                "Payload directory missing. Run: node tools/import-fortweb-runtime-package.mjs <fortweb-runtime.zip>"
+            )
+        }
+
+        if (!manifestFile.exists()) {
+            throw GradleException(
+                "manifest.json missing. Run: node tools/import-fortweb-runtime-package.mjs <fortweb-runtime.zip>"
+            )
+        }
+
+        if (!entryHtml.exists() || !mainJs.exists() || !requirementsContract.exists()) {
+            throw GradleException(
+                "FortWeb runtime incomplete. Run: node tools/import-fortweb-runtime-package.mjs <fortweb-runtime.zip>"
+            )
+        }
+
+        logger.lifecycle("verifyPreparedPayload: payload valid (run 'node tools/validate-staged-payload.mjs' for full validation)")
+    }
+}
+
+// Wire into packaging tasks but not Android Studio sync
+tasks.matching { it.name in setOf("assembleDebug", "assembleRelease", "bundleRelease") }.configureEach {
+    dependsOn("verifyPreparedPayload")
 }

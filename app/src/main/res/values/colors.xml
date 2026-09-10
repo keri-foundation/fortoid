@@ -2,4 +2,11 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="keri_black">#FF000000</color>
+    <color name="keri_green">#FF61783E</color>
+    <color name="keri_gold">#FF986C32</color>
+    <color name="keri_cream">#FFF4F2EC</color>
+    <color name="keri_cream_dark">#FFEBE6DB</color>
+    <color name="keri_window_light">#FFF7F8F4</color>
+    <color name="keri_window_dark">#FF0D0D0F</color>
 </resources>

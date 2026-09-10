@@ -1,9 +1,9 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
-    <style name="Base.Theme.FortAndroid" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+<resources>
+    <style name="Base.Theme.KeriWallet" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/keri_green</item>
+        <item name="colorSecondary">@color/keri_gold</item>
+        <item name="android:windowBackground">@color/keri_window_light</item>
     </style>
 
-    <style name="Theme.FortAndroid" parent="Base.Theme.FortAndroid" />
+    <style name="Theme.KeriWallet" parent="Base.Theme.KeriWallet" />
 </resources>
