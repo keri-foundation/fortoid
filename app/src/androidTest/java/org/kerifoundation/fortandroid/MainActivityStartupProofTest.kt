@@ -7,26 +7,46 @@ import android.webkit.WebView
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.json.JSONObject
 import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.kerifoundation.fort.bridge.BridgeContract
+import java.io.FileInputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Instrumentation proof that the production MainActivity successfully
- * loads the canonical FortWeb runtime under the expected trust boundary.
+ * Instrumentation proof that the production MainActivity reaches a usable
+ * FortWeb runtime under the expected trust boundary.
  *
- * Observes the real production WebView non-invasively via periodic
- * evaluateJavascript polling. Does NOT replace FortWebViewClient.
+ * Readiness is decided exclusively by [StartupReadiness]. It requires a
+ * rendered application (non-empty `#app-root`) AND a completed real
+ * `vaults.list` runtime operation. The previous proof accepted an existing
+ * `#app-root` plus the absence of a native error, which could pass while
+ * application JavaScript or the worker was non-functional.
  *
- * A single poll is considered READY only when ALL required conditions
- * are simultaneously true — not merely when the URL matches.
+ * Observation is non-invasive in the strongest sense: MainActivity keeps the
+ * only bridge listener. The instrumentation test does NOT register a second
+ * `addWebMessageListener` under the production object name, because AndroidX
+ * rejects that outright (`jsObjectName bridge was already added for world`),
+ * which would both break the observer and perturb the topology under test.
+ *
+ * Instead the test reads the diagnostics the production listener already
+ * emits (`bridge log=`, `bridge js_error=`, ...) and turns them back into
+ * [StartupBridgeEvent]s. A message can only appear there after MainActivity
+ * has accepted it under the production origin and main-frame policy, so the
+ * observed event is production-accepted evidence rather than test-synthesised
+ * proof. The production WebView client is untouched and MainActivity is not
+ * modified.
+ *
+ * Listener timing: the startup `vaults.list` requires the Pyodide worker, so
+ * it is emitted well after launch; the logcat reader observes the whole buffer
+ * for the run, never a window, which is also what keeps fatal latching sound.
  *
  * Evidence classification: ANDROID-CANONICAL-STARTUP
  */
@@ -35,10 +55,32 @@ class MainActivityStartupProofTest {
 
     companion object {
         private const val TAG = "MainActivityStartupProof"
+
+        /** Production tag: MainActivity logs accepted bridge payloads here. */
+        private const val LOG_TAG = "FortAndroid"
         private const val TRUSTED_ORIGIN = "https://appassets.androidplatform.net"
         private const val CANONICAL_PATH = "/app/index.html"
         private const val POLL_INTERVAL_MS = 500L
-        private const val TIMEOUT_MS = 24_000L
+
+        // Cold-boot budget: rendering plus the Pyodide worker plus the startup
+        // vaults.list RPC. The established worker proof already allows 210s for
+        // the worker alone, so a shorter window here could only produce a false
+        // negative on a cold emulator.
+        private const val TIMEOUT_MS = 240_000L
+        private const val MAX_EVENT_CHARS = 4096
+
+        private const val DOM_QUERY = "(function(){" +
+            "var root = document.getElementById('app-root');" +
+            "return JSON.stringify({" +
+            "origin: location.origin || ''," +
+            "pathname: location.pathname || ''," +
+            "isSecureContext: window.isSecureContext || false," +
+            "fortOrigin: (window.__FORT_RUNTIME_ORIGIN__ && " +
+            "  window.__FORT_RUNTIME_ORIGIN__.documentOrigin) || null," +
+            "appRootPresent: root !== null," +
+            "appRootChildCount: root ? root.children.length : 0" +
+            "});" +
+            "})()"
     }
 
     private lateinit var scenario: ActivityScenario<MainActivity>
@@ -48,168 +90,262 @@ class MainActivityStartupProofTest {
         if (::scenario.isInitialized) scenario.close()
     }
 
-    data class StartupObservation(
-        val webViewPresent: Boolean,
+    /** Trust-boundary and DOM state sampled from the production page. */
+    private data class PageSample(
         val origin: String,
         val pathname: String,
         val isSecureContext: Boolean,
         val fortOrigin: String?,
-        val title: String,
-        val hasAppRoot: Boolean,
-        val nativeErrorVisible: Boolean,
-        val nativeErrorText: String?
+        val dom: StartupDomSnapshot,
+        val jsEvaluationFailed: Boolean,
     ) {
-        val isReady: Boolean get() =
-            webViewPresent &&
-            origin == TRUSTED_ORIGIN &&
-            pathname == CANONICAL_PATH &&
-            isSecureContext &&
-            fortOrigin == TRUSTED_ORIGIN &&
-            hasAppRoot &&
-            !nativeErrorVisible
+        /** The document is the bundled runtime at the expected origin. */
+        val trustBoundaryHolds: Boolean
+            get() = origin == TRUSTED_ORIGIN &&
+                pathname == CANONICAL_PATH &&
+                isSecureContext &&
+                fortOrigin == TRUSTED_ORIGIN
 
         fun summary(): String = buildString {
-            append("webView=$webViewPresent")
-            append(" origin=$origin")
-            append(" pathname=$pathname")
-            append(" secureContext=$isSecureContext")
-            append(" fortOrigin=$fortOrigin")
-            append(" title=$title")
-            append(" hasAppRoot=$hasAppRoot")
-            append(" nativeErrorVisible=$nativeErrorVisible")
-            if (nativeErrorText != null) append(" nativeErrorText=$nativeErrorText")
+            append("origin=").append(origin)
+            append(" pathname=").append(pathname)
+            append(" secureContext=").append(isSecureContext)
+            append(" fortOrigin=").append(fortOrigin)
+            append(" appRootPresent=").append(dom.appRootPresent)
+            append(" appRootChildCount=").append(dom.appRootChildCount)
+            append(" jsEvaluationFailed=").append(jsEvaluationFailed)
         }
     }
 
     @Test
-    fun mainActivityLoadsCanonicalFortWebEntrypoint() {
-        val lastObservation = AtomicReference<StartupObservation>()
+    fun mainActivityReachesReadyFortWebRuntime() {
+        val lastSample = AtomicReference<PageSample>()
+        val lastVerdict = AtomicReference<StartupVerdict>()
+        val nativeErrorText = AtomicReference<String>()
         var lastStage = "NO_WEBVIEW"
 
+        val startedAt = SystemClock.elapsedRealtime()
+
+        // Defines the observation window: everything the production listener
+        // logs from here on belongs to this run.
+        clearProductionLog()
+
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        val deadline = SystemClock.elapsedRealtime() + TIMEOUT_MS
+
+        // No bridge listener is registered here on purpose. MainActivity owns
+        // the only listener for the production object name, and a second
+        // registration under that name is rejected by AndroidX, so observing
+        // through the production listener's own diagnostics is the only route
+        // that leaves the topology under test intact.
+
+        val deadline = startedAt + TIMEOUT_MS
 
         while (SystemClock.elapsedRealtime() < deadline) {
             val sampleLatch = CountDownLatch(1)
-            val sample = AtomicReference<StartupObservation>()
+            val sampleRef = AtomicReference<PageSample>()
 
             scenario.onActivity { activity ->
-                val wvField = MainActivity::class.java.getDeclaredField("webView")
-                wvField.isAccessible = true
-                @Suppress("UNCHECKED_CAST")
-                val wv = wvField.get(activity) as? WebView
+                val wv = productionWebView(activity)
 
                 if (wv == null) {
-                    // Check for native fail-closed UI
                     val errorViewField = MainActivity::class.java.getDeclaredField("errorView")
                     errorViewField.isAccessible = true
                     val errorView = errorViewField.get(activity) as? TextView
-                    val errorVisible = errorView?.visibility == View.VISIBLE
-                    val errorText = if (errorVisible) errorView?.text?.toString() else null
-                    sample.set(StartupObservation(
-                        webViewPresent = false, origin = "", pathname = "",
-                        isSecureContext = false, fortOrigin = null, title = "",
-                        hasAppRoot = false,
-                        nativeErrorVisible = errorVisible, nativeErrorText = errorText
-                    ))
-                    if (errorVisible) {
-                        Log.e(TAG, "STAGE=NATIVE_FAIL_CLOSED text=$errorText")
-                        lastStage = "NATIVE_FAIL_CLOSED"
+                    if (errorView?.visibility == View.VISIBLE) {
+                        nativeErrorText.set(errorView.text?.toString())
                     }
                     sampleLatch.countDown()
                     return@onActivity
                 }
 
-                // Non-invasive JS query through the real production WebView
-                wv.evaluateJavascript(
-                    "(function(){" +
-                    "return JSON.stringify({" +
-                    "origin: location.origin || ''," +
-                    "pathname: location.pathname || ''," +
-                    "isSecureContext: window.isSecureContext || false," +
-                    "fortOrigin: (window.__FORT_RUNTIME_ORIGIN__ && " +
-                    "  window.__FORT_RUNTIME_ORIGIN__.documentOrigin) || null," +
-                    "title: document.title || ''," +
-                    "hasAppRoot: document.getElementById('app-root') !== null" +
-                    "});" +
-                    "})()"
-                ) { jsResult ->
-                    val obs = parseJsResult(jsResult)
-                    sample.set(obs)
-                    val newStage = when {
-                        obs.isReady -> "READY"
-                        obs.fortOrigin == TRUSTED_ORIGIN -> "ORIGIN_CONTRACT_VISIBLE"
-                        obs.origin == TRUSTED_ORIGIN && obs.pathname == CANONICAL_PATH -> "NAVIGATION_COMMITTED"
-                        obs.webViewPresent -> "WEBVIEW_PRESENT"
-                        else -> "NO_WEBVIEW"
-                    }
-                    if (newStage != lastStage) {
-                        Log.i(TAG, "STAGE=$newStage ${obs.summary()}")
-                        lastStage = newStage
-                    }
+                wv.evaluateJavascript(DOM_QUERY) { jsResult ->
+                    sampleRef.set(parseSample(jsResult))
                     sampleLatch.countDown()
                 }
             }
 
-            // Wait for this sample on the test thread
-            sampleLatch.await(POLL_INTERVAL_MS + 2000, TimeUnit.MILLISECONDS)
-            val obs = sample.get() ?: continue
-            lastObservation.set(obs)
+            sampleLatch.await(POLL_INTERVAL_MS + 3000, TimeUnit.MILLISECONDS)
 
-            if (obs.nativeErrorVisible) {
-                fail("Native fail-closed: ${obs.nativeErrorText ?: "no text"}")
+            nativeErrorText.get()?.let { text ->
+                fail("Native fail-closed before canonical startup: " + text)
             }
 
-            if (obs.isReady) {
-                Log.i(TAG, "STAGE=READY")
-                // All assertions satisfied in one coherent snapshot — exit cleanly
+            val sample = sampleRef.get() ?: continue
+            lastSample.set(sample)
+
+            // The whole run's production diagnostics, never a window: fatal
+            // events stay latched because StartupReadiness scans the full log.
+            val events = productionBridgeEvents()
+            val verdict = StartupReadiness.evaluate(
+                dom = sample.dom,
+                events = events,
+            )
+            lastVerdict.set(verdict)
+
+            val stage = when {
+                verdict.fatalFailure != null -> "FATAL_FAILURE"
+                sample.jsEvaluationFailed -> "JS_EVALUATION_FAILED"
+                !sample.trustBoundaryHolds -> "TRUST_BOUNDARY_PENDING"
+                !verdict.renderedApplication -> "RENDER_NOT_READY"
+                !verdict.runtimeOperationSucceeded -> "RUNTIME_OPERATION_NOT_READY"
+                else -> "READY"
+            }
+            if (stage != lastStage) {
+                Log.i(TAG, "STAGE=" + stage + " " + sample.summary() + " " + verdict.summary())
+                lastStage = stage
+            }
+
+            if (verdict.fatalFailure != null) {
+                fail(
+                    "FortWeb reported a fatal startup condition; readiness cannot be " +
+                        "established. failure=" + verdict.fatalFailure + " " + sample.summary(),
+                )
+            }
+
+            if (verdict.isReady && sample.trustBoundaryHolds) {
+                val elapsed = SystemClock.elapsedRealtime() - startedAt
+                // The decisive live event, exactly as the production listener
+                // received and logged it. No test-side synthesis.
+                val operation = events.firstOrNull { event ->
+                    val fields = StartupReadiness.parseFields(event.message)
+                    fields["event"] == "request_end" && fields["outcome"] == "ok"
+                }
+                Log.i(TAG, "LIVE_EVENT " + (operation?.message ?: "(not found)"))
+                Log.i(TAG, "STAGE=READY elapsedMs=" + elapsed + " " + sample.summary() + " " + verdict.summary())
+                assertTrue("readiness requires a rendered application", verdict.renderedApplication)
+                assertTrue(
+                    "readiness requires a completed vaults.list runtime operation",
+                    verdict.runtimeOperationSucceeded,
+                )
+                assertTrue(
+                    "the successful runtime operation must be observable in the production log",
+                    operation != null,
+                )
                 return
             }
 
-            // Brief sleep on test thread before next poll
             Thread.sleep(POLL_INTERVAL_MS)
         }
 
-        // Timeout — report the latest observation
-        val latest = lastObservation.get()
-        val report = latest?.summary() ?: "(no observation)"
-        Log.e(TAG, "STAGE=TIMEOUT lastStage=$lastStage $report")
-        fail("Canonical startup readiness not reached before timeout. stage=$lastStage $report")
+        val sample = lastSample.get()
+        val verdict = lastVerdict.get()
+        val observed = productionBridgeEvents()
+            .map { it.message }
+            .filter { it.contains("vaults.list") || it.contains("worker_") || it.contains("request_") }
+            .take(8)
+
+        fail(
+            "Production startup readiness not reached before timeout." +
+                " stage=" + lastStage +
+                " page=" + (sample?.summary() ?: "(no DOM sample)") +
+                " verdict=" + (verdict?.summary() ?: "(no verdict)") +
+                " relevantEvents=" + observed +
+                (if (verdict != null && verdict.renderedApplication && !verdict.runtimeOperationSucceeded) {
+                    " NOTE: the application rendered but no vaults.list request_end reached the" +
+                        " production bridge listener, so no runtime operation of record completed."
+                } else {
+                    ""
+                }),
+        )
     }
 
-    private fun parseJsResult(raw: String?): StartupObservation {
-        if (raw == null) return StartupObservation(
-            webViewPresent = true, origin = "", pathname = "",
-            isSecureContext = false, fortOrigin = null, title = "",
-            hasAppRoot = false, nativeErrorVisible = false, nativeErrorText = null
+    /**
+     * Producer diagnostics as emitted by the PRODUCTION bridge listener.
+     *
+     * MainActivity owns the only listener for the bridge object name, so the
+     * test cannot register its own and must observe the app's own bounded log
+     * output instead. A message reaches this log only after the production
+     * listener has accepted it under the production origin and main-frame
+     * policy, which is exactly the provenance the proof needs.
+     */
+    private fun productionBridgeEvents(): List<StartupBridgeEvent> =
+        readProductionLog().lineSequence().mapNotNull(::parseProductionLogLine).toList()
+
+    /** Start the observation window at the current end of the log buffer. */
+    private fun clearProductionLog() {
+        shell("logcat -c").close()
+    }
+
+    private fun readProductionLog(): String =
+        shell("logcat -d -v brief -s $LOG_TAG:V").use { descriptor ->
+            FileInputStream(descriptor.fileDescriptor).bufferedReader().use { it.readText() }
+        }
+
+    private fun shell(command: String) =
+        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+
+    /**
+     * Turn one production log line into a bridge event.
+     *
+     * MainActivity emits `bridge log=<message>`, `bridge lifecycle=<message>`,
+     * `bridge js_error=<message>` and `bridge unhandled_rejection=<message>`.
+     * Anything else in the tag's stream is ignored rather than interpreted.
+     */
+    private fun parseProductionLogLine(line: String): StartupBridgeEvent? {
+        val marker = "bridge "
+        val markerIndex = line.indexOf(marker)
+        if (markerIndex < 0) return null
+
+        val remainder = line.substring(markerIndex + marker.length)
+        val separator = remainder.indexOf('=')
+        if (separator <= 0) return null
+
+        val type = when (remainder.substring(0, separator).trim()) {
+            "log" -> "log"
+            "lifecycle" -> "lifecycle"
+            BridgeContract.BRIDGE_JS_ERROR -> BridgeContract.BRIDGE_JS_ERROR
+            BridgeContract.BRIDGE_UNHANDLED_REJECTION -> BridgeContract.BRIDGE_UNHANDLED_REJECTION
+            else -> return null
+        }
+
+        val message = remainder.substring(separator + 1).trim()
+        if (message.isEmpty()) return null
+
+        return StartupBridgeEvent(
+            type = type,
+            message = if (message.length > MAX_EVENT_CHARS) message.take(MAX_EVENT_CHARS) else message,
         )
-        // evaluateJavascript wraps the result in double quotes for string returns.
-        // Strip outer quotes and unescape internal ones.
+    }
+
+    private fun productionWebView(activity: MainActivity): WebView? {
+        val field = MainActivity::class.java.getDeclaredField("webView")
+        field.isAccessible = true
+        return field.get(activity) as? WebView
+    }
+
+    private fun parseSample(raw: String?): PageSample {
+        if (raw == null) return unavailableSample()
+        // evaluateJavascript wraps string returns in double quotes.
         val unquoted = raw.trim()
             .removeSurrounding("\"")
             .replace("\\\"", "\"")
             .replace("\\\\", "\\")
         return try {
-            val obj = org.json.JSONObject(unquoted)
+            val obj = JSONObject(unquoted)
             val fo = obj.optString("fortOrigin", "")
-            StartupObservation(
-                webViewPresent = true,
+            PageSample(
                 origin = obj.optString("origin", ""),
                 pathname = obj.optString("pathname", ""),
                 isSecureContext = obj.optBoolean("isSecureContext", false),
                 fortOrigin = if (fo.isNotEmpty() && fo != "null") fo else null,
-                title = obj.optString("title", ""),
-                hasAppRoot = obj.optBoolean("hasAppRoot", false),
-                nativeErrorVisible = false,
-                nativeErrorText = null
+                dom = StartupDomSnapshot(
+                    appRootPresent = obj.optBoolean("appRootPresent", false),
+                    appRootChildCount = obj.optInt("appRootChildCount", 0),
+                ),
+                jsEvaluationFailed = false,
             )
         } catch (_: Exception) {
-            StartupObservation(
-                webViewPresent = true, origin = "", pathname = "",
-                isSecureContext = false, fortOrigin = null, title = "",
-                hasAppRoot = false,
-                nativeErrorVisible = false, nativeErrorText = null
-            )
+            unavailableSample()
         }
     }
+
+    /** Render evidence is unavailable — never treated as success. */
+    private fun unavailableSample() = PageSample(
+        origin = "",
+        pathname = "",
+        isSecureContext = false,
+        fortOrigin = null,
+        dom = StartupDomSnapshot(appRootPresent = false, appRootChildCount = 0),
+        jsEvaluationFailed = true,
+    )
 }
