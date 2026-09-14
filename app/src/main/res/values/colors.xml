@@ -9,4 +9,10 @@
     <color name="keri_cream_dark">#FFEBE6DB</color>
     <color name="keri_window_light">#FFF7F8F4</color>
     <color name="keri_window_dark">#FF0D0D0F</color>
+
+    <!-- Semantic native surfaces. Native layouts and Kotlin must reference these
+         names instead of a mode-specific palette value; the configuration
+         qualifier (values-night) selects the surface for night mode. -->
+    <color name="keri_window_surface">@color/keri_window_light</color>
+    <color name="keri_on_window_surface">@color/keri_black</color>
 </resources>

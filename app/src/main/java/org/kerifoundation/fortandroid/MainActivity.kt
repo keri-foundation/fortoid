@@ -3,7 +3,6 @@ package org.kerifoundation.fortandroid
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
-import android.graphics.Color
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
@@ -316,7 +315,9 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 Gravity.CENTER
             )
-            setBackgroundColor(Color.parseColor("#F7F8F4"))
+            // Native surfaces follow day/night mode. Resolve the semantic surface
+            // resource so startup and renderer recovery never flash the light palette.
+            setBackgroundColor(getContext().getColor(R.color.keri_window_surface))
 
             settings.apply {
                 javaScriptEnabled = true

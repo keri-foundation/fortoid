@@ -2,7 +2,7 @@
     <style name="Base.Theme.KeriWallet" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/keri_green</item>
         <item name="colorSecondary">@color/keri_gold</item>
-        <item name="android:windowBackground">@color/keri_window_light</item>
+        <item name="android:windowBackground">@color/keri_window_surface</item>
     </style>
 
     <style name="Theme.KeriWallet" parent="Base.Theme.KeriWallet" />
