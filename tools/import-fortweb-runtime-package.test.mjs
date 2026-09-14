@@ -65,7 +65,8 @@ function makeManifest(overrides = {}) {
 
 function makeRR(overrides = {}) {
   return {
-    schema: 'fort.runtime-requirements.v1',
+    schema: 'fort.runtime-requirements.v2',
+    version: 2,
     producer: 'fortweb',
     payload_profile: 'offline-runtime',
     capabilities: [],

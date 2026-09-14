@@ -5,6 +5,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -17,25 +18,15 @@ const REAL_CONFIG = path.join(REPO_ROOT, 'runtime-platform-config.json');
 let _seq = 0;
 function seq() { return _seq++; }
 
-const REAL_RR = {
-  schema: 'fort.runtime-requirements.v1',
-  version: 1,
-  producer: 'fortweb',
-  payload_profile: 'offline-runtime',
-  capabilities: {
-    stable_origin_across_launches: { required: true, description: 'origin stable' },
-    persistent_storage_partition: { required: true, description: 'storage persists' },
-    secure_context: { required: true, description: 'secure context' },
-    remote_network_prohibition: { required: true, description: 'no network' },
-    bundled_assets_only: { required: true, description: 'bundled only' },
-    worker_availability: { required: true, description: 'workers available' },
-    main_frame_provenance: { required: true, description: 'main frame only' },
-    origin_provenance: { required: true, description: 'origin check' },
-    deterministic_entrypoint: { required: true, description: 'deterministic entry' },
-    no_fallback_shell_substitution: { required: true, description: 'no fallback' },
-  },
-  forbidden_behaviors: ['network_fetch', 'service_worker_registration', 'general_purpose_browsing', 'localhost_or_loopback_origin', 'http_fallback'],
-};
+// Authoritative FortWeb runtime-requirements v2 contract, embedded verbatim as
+// the producer's canonical serialization emits it. The frozen byte length and
+// digest assertions in test 0 are what keep this fixture the real contract
+// rather than a paraphrase; if the producer contract moves, test 0 fails.
+const AUTHORITATIVE_V2_BYTES = 1930;
+const AUTHORITATIVE_V2_SHA256 = 'ae31c57077fb24744eda3e01d53350bd9dadf9d0b8b6647d5252f837854ffdcc';
+const AUTHORITATIVE_V2_TEXT = '{"capabilities":{"bundled_assets_only":{"description":"All runtime assets must be served from the application bundle.","required":true},"deterministic_entrypoint":{"description":"The runtime entrypoint must be loaded from a deterministic package-relative path.","required":true},"main_frame_provenance":{"description":"Bridge messages and navigation must be restricted to the main document frame.","required":true},"no_fallback_shell_substitution":{"description":"The runtime must not substitute a fallback shell when the declared entrypoint is unavailable.","required":true},"origin_provenance":{"description":"Bridge messages must be restricted to the configured origin with exact host matching.","required":true},"persistent_storage_partition":{"description":"IndexedDB must persist across launches within a stable storage partition.","required":true},"remote_runtime_acquisition_prohibition":{"description":"HTML, JavaScript, workers, Python, WASM, wheels, and other runtime assets must load only from the verified bundle. Remote acquisition and CDN fallback are prohibited.","required":true},"secure_context":{"description":"The runtime must execute in a secure context.","required":true},"stable_origin_across_launches":{"description":"The document origin must be stable across app launches.","required":true},"wallet_service_https":{"description":"HTTPS wallet-service data requests must be allowed for KF boot, witnesses, watchers, account operations, and OOBIs. Responses must not be loaded or executed as runtime code.","required":true},"worker_availability":{"description":"Web Workers must be available for the Pyodide runtime.","required":true}},"forbidden_behaviors":["remote_runtime_acquisition","cleartext_wallet_service_traffic","service_worker_registration","general_purpose_browsing","http_fallback"],"payload_profile":"offline-runtime","producer":"fortweb","schema":"fort.runtime-requirements.v2","version":2}\n';
+
+const REAL_RR = JSON.parse(AUTHORITATIVE_V2_TEXT);
 
 async function stageFixture(label, rrOverrides = {}, configContent = null) {
   const dir = path.join(FIXTURE_DIR, `fixture-${seq()}-${label}`);
@@ -68,14 +59,21 @@ after(async () => { await rm(FIXTURE_DIR, { recursive: true, force: true }).catc
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('validateCompatibility — structural', () => {
-  it('1. complete canonical v1 requirements fixture produces evidence-backed result', async () => {
+  it('0. fixture is the authoritative producer v2 contract bytes', () => {
+    assert.equal(Buffer.byteLength(AUTHORITATIVE_V2_TEXT), AUTHORITATIVE_V2_BYTES);
+    assert.equal(createHash('sha256').update(AUTHORITATIVE_V2_TEXT).digest('hex'), AUTHORITATIVE_V2_SHA256);
+    assert.equal(REAL_RR.schema, 'fort.runtime-requirements.v2');
+    assert.equal(REAL_RR.version, 2);
+  });
+
+  it('1. complete canonical v2 requirements fixture produces evidence-backed result', async () => {
     const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
     const { dir } = await stageFixture('evidence-backed', {}, cfg);
     const r = await validateCompatibility(dir, path.join(dir, 'runtime-platform-config.json'));
     assert.ok(typeof r.compatible === 'boolean');
     assert.ok(Array.isArray(r.capabilities));
     assert.ok(Array.isArray(r.forbidden_behaviors));
-    assert.ok(r.capabilities.length >= 10);
+    assert.ok(r.capabilities.length >= 11);
     assert.ok(r.forbidden_behaviors.length >= 5);
     // Every capability result has the required fields
     for (const c of r.capabilities) {
@@ -188,10 +186,43 @@ describe('validateCompatibility — structural', () => {
   });
 
   it('13b. wrong version fails', async () => {
-    const { dir } = await stageFixture('wrong-version', { version: 2 });
+    const { dir } = await stageFixture('wrong-version', { version: 1 });
     const r = await validateCompatibility(dir);
     const errs = r.errors || r;
     assert.ok(errs.some(e => e.message.includes('version')), `expected version error, got: ${JSON.stringify(errs)}`);
+  });
+
+  it('13d. obsolete v1 requirements are rejected, not reinterpreted', async () => {
+    const { dir } = await stageFixture('v1-schema', {
+      schema: 'fort.runtime-requirements.v1',
+      version: 1,
+      capabilities: {
+        ...REAL_RR.capabilities,
+        remote_network_prohibition: { required: true, description: 'no network' },
+      },
+      forbidden_behaviors: ['network_fetch', 'service_worker_registration', 'general_purpose_browsing', 'http_fallback'],
+    });
+    const r = await validateCompatibility(dir);
+    const errs = r.errors || r;
+    assert.ok(errs.some(e => e.message.includes('schema')), `expected schema error, got: ${JSON.stringify(errs)}`);
+    assert.strictEqual(r.compatible, false, 'obsolete v1 requirements must never be compatible');
+  });
+
+  it('13e. v2 requirements paired with legacy deny-all policy fail closed', async () => {
+    // Exactly the accidental legacy interpretation this migration must prevent:
+    // real v2 requirements against the real platform config with only the network
+    // policy reverted to the obsolete v1 spelling.
+    const cfg = JSON.parse(await readFile(REAL_CONFIG, 'utf-8'));
+    cfg.network.policy = 'deny-all';
+    const { dir } = await stageFixture('v2-with-deny-all', {}, cfg);
+    const cfgPath = path.join(dir, 'runtime-platform-config.json');
+    const r = await validateCompatibility(dir, cfgPath);
+    assert.strictEqual(r.compatible, false, 'v2 requirements must not be satisfied by a deny-all platform declaration');
+    const sw = r.capabilities?.find(c => c.capability === 'wallet_service_https');
+    assert.ok(sw, 'wallet_service_https must be evaluated');
+    assert.ok(!sw.compatible, 'wallet_service_https must fail without the wallet-service policy');
+    const ct = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'cleartext_wallet_service_traffic');
+    assert.ok(ct && !ct.compatible, 'cleartext_wallet_service_traffic must fail without the wallet-service policy');
   });
 
   it('13c. non-integer version fails', async () => {
@@ -306,7 +337,7 @@ describe('validateCompatibility — capabilities', () => {
 
 describe('validateCompatibility — forbidden behaviors', () => {
   it('21. unknown forbidden behavior fails', async () => {
-    const { dir } = await stageFixture('unknown-fb', {}, { schema: 'fort.runtime-platform-config.v1', platform: 'android-webview', requirements_compatibility: { supported_schemas: ['fort.runtime-requirements.v1'], supported_profiles: ['offline-runtime'] } });
+    const { dir } = await stageFixture('unknown-fb', {}, { schema: 'fort.runtime-platform-config.v1', platform: 'android-webview', requirements_compatibility: { supported_schemas: ['fort.runtime-requirements.v2'], supported_profiles: ['offline-runtime'] } });
     const rr = { ...REAL_RR, forbidden_behaviors: [...REAL_RR.forbidden_behaviors, 'unknown_fb'] };
     await writeFile(path.join(dir, 'contracts/runtime-requirements.json'), JSON.stringify(rr));
     const cfgPath = path.join(dir, 'runtime-platform-config.json');
@@ -351,21 +382,75 @@ describe('validateCompatibility — forbidden behaviors', () => {
   });
 
   it('22a. missing forbidden behavior from vocabulary fails', async () => {
-    const reduced = REAL_RR.forbidden_behaviors.filter(f => f !== 'network_fetch');
+    const reduced = REAL_RR.forbidden_behaviors.filter(f => f !== 'remote_runtime_acquisition');
     const { dir } = await stageFixture('missing-fb', { forbidden_behaviors: reduced });
     const r = await validateCompatibility(dir);
-    const nf = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'network_fetch');
-    assert.ok(nf, 'network_fetch must be reported as missing');
-    assert.ok(!nf.compatible, 'missing canonical FB must fail');
-    assert.ok(nf.reason.includes('missing required'), `expected missing-required, got: ${nf.reason}`);
+    const ra = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'remote_runtime_acquisition');
+    assert.ok(ra, 'remote_runtime_acquisition must be reported as missing');
+    assert.ok(!ra.compatible, 'missing canonical FB must fail');
+    assert.ok(ra.reason.includes('missing required'), `expected missing-required, got: ${ra.reason}`);
   });
 
   it('22b. duplicate forbidden behaviors fail', async () => {
-    const dups = [...REAL_RR.forbidden_behaviors, 'network_fetch'];
+    const dups = [...REAL_RR.forbidden_behaviors, 'remote_runtime_acquisition'];
     const { dir } = await stageFixture('dup-fb', { forbidden_behaviors: dups });
     const r = await validateCompatibility(dir);
     const errs = r.errors || r;
     assert.ok(errs.some(e => e.message.includes('duplicates')), `expected duplicates error, got: ${JSON.stringify(errs)}`);
+  });
+
+  it('22e. missing wallet_service_https capability fails', async () => {
+    const caps = { ...REAL_RR.capabilities };
+    delete caps.wallet_service_https;
+    const { dir } = await stageFixture('missing-wallet-cap', { capabilities: caps });
+    const r = await validateCompatibility(dir);
+    const c = r.capabilities?.find(x => x.capability === 'wallet_service_https');
+    assert.ok(c, 'wallet_service_https must be reported as missing');
+    assert.ok(!c.compatible, 'missing wallet_service_https must fail');
+    assert.ok(c.reason.includes('missing required'), `expected missing-required, got: ${c.reason}`);
+  });
+
+  it('22f. missing remote_runtime_acquisition_prohibition capability fails', async () => {
+    const caps = { ...REAL_RR.capabilities };
+    delete caps.remote_runtime_acquisition_prohibition;
+    const { dir } = await stageFixture('missing-remote-acq-cap', { capabilities: caps });
+    const r = await validateCompatibility(dir);
+    const c = r.capabilities?.find(x => x.capability === 'remote_runtime_acquisition_prohibition');
+    assert.ok(c, 'remote_runtime_acquisition_prohibition must be reported as missing');
+    assert.ok(!c.compatible, 'missing remote_runtime_acquisition_prohibition must fail');
+  });
+
+  it('22g. missing cleartext_wallet_service_traffic prohibition fails', async () => {
+    const reduced = REAL_RR.forbidden_behaviors.filter(f => f !== 'cleartext_wallet_service_traffic');
+    const { dir } = await stageFixture('missing-cleartext-fb', { forbidden_behaviors: reduced });
+    const r = await validateCompatibility(dir);
+    const ct = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'cleartext_wallet_service_traffic');
+    assert.ok(ct, 'cleartext_wallet_service_traffic must be reported as missing');
+    assert.ok(!ct.compatible, 'missing cleartext prohibition must fail');
+  });
+
+  it('22h. obsolete v1 capability vocabulary fails as unknown', async () => {
+    const caps = {
+      ...REAL_RR.capabilities,
+      remote_network_prohibition: { required: true, description: 'obsolete v1 capability' },
+    };
+    const { dir } = await stageFixture('obsolete-v1-cap', { capabilities: caps });
+    const r = await validateCompatibility(dir);
+    const c = r.capabilities?.find(x => x.capability === 'remote_network_prohibition');
+    assert.ok(c, 'obsolete v1 capability must appear in results');
+    assert.ok(!c.compatible, 'obsolete v1 capability must fail closed');
+    assert.ok(c.reason.includes('unknown'), `expected unknown, got: ${c.reason}`);
+  });
+
+  it('22i. obsolete v1 network_fetch forbidden behavior fails as unknown', async () => {
+    const { dir } = await stageFixture('obsolete-v1-fb', {
+      forbidden_behaviors: [...REAL_RR.forbidden_behaviors, 'network_fetch'],
+    });
+    const r = await validateCompatibility(dir);
+    const nf = r.forbidden_behaviors?.find(f => f.forbidden_behavior === 'network_fetch');
+    assert.ok(nf, 'network_fetch must appear in results');
+    assert.ok(!nf.compatible, 'network_fetch must fail closed under v2');
+    assert.ok(nf.reason.includes('unknown'), `expected unknown, got: ${nf.reason}`);
   });
 });
 
@@ -383,7 +468,7 @@ describe('validateCompatibility — edge cases', () => {
   });
 
   it('24. missing capabilities object fails', async () => {
-    const { dir } = await stageFixture('no-caps', { capabilities: undefined }, { schema: 'fort.runtime-platform-config.v1', platform: 'android-webview', requirements_compatibility: { supported_schemas: ['fort.runtime-requirements.v1'], supported_profiles: ['offline-runtime'] } });
+    const { dir } = await stageFixture('no-caps', { capabilities: undefined }, { schema: 'fort.runtime-platform-config.v1', platform: 'android-webview', requirements_compatibility: { supported_schemas: ['fort.runtime-requirements.v2'], supported_profiles: ['offline-runtime'] } });
     const cfgPath = path.join(dir, 'runtime-platform-config.json');
     const r = await validateCompatibility(dir, cfgPath);
     const errs = r.errors || r;
@@ -391,7 +476,7 @@ describe('validateCompatibility — edge cases', () => {
   });
 
   it('25. missing forbidden_behaviors fails', async () => {
-    const { dir } = await stageFixture('no-fb', { forbidden_behaviors: undefined }, { schema: 'fort.runtime-platform-config.v1', platform: 'android-webview', requirements_compatibility: { supported_schemas: ['fort.runtime-requirements.v1'], supported_profiles: ['offline-runtime'] } });
+    const { dir } = await stageFixture('no-fb', { forbidden_behaviors: undefined }, { schema: 'fort.runtime-platform-config.v1', platform: 'android-webview', requirements_compatibility: { supported_schemas: ['fort.runtime-requirements.v2'], supported_profiles: ['offline-runtime'] } });
     const cfgPath = path.join(dir, 'runtime-platform-config.json');
     const r = await validateCompatibility(dir, cfgPath);
     const errs = r.errors || r;
@@ -403,9 +488,9 @@ describe('validateCompatibility — edge cases', () => {
     const { dir } = await stageFixture('overall-compatible', {}, cfg);
     const r = await validateCompatibility(dir, path.join(dir, 'runtime-platform-config.json'));
     assert.strictEqual(r.compatible, true, 'must be COMPATIBLE — all canonical requirements are satisfied');
-    // all 10 capabilities SATISFIED
+    // all 11 v2 capabilities SATISFIED
     const satCaps = r.capabilities.filter(c => c.compatible).length;
-    assert.ok(satCaps >= 10, `expected >=10 SATISFIED capabilities, got ${satCaps}`);
+    assert.ok(satCaps >= 11, `expected >=11 SATISFIED capabilities, got ${satCaps}`);
     // no_fallback_shell_substitution must be SATISFIED
     const nf = r.capabilities.find(c => c.capability === 'no_fallback_shell_substitution');
     assert.ok(nf?.compatible, 'no_fallback_shell_substitution must be SATISFIED');

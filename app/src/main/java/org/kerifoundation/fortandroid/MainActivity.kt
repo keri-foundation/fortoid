@@ -104,12 +104,41 @@ internal object WebRequestPolicy {
         return uri != null && isTrustedBridgeParts(uri.scheme, uri.host)
     }
 
-    fun shouldBlockSubresource(uri: Uri?, isMainFrame: Boolean): Boolean {
-        if (isTrustedPayloadUri(uri)) {
+    /**
+     * Android-owned off-origin subresource decision.
+     *
+     * The v2 runtime requirements contract permits HTTPS wallet-service data
+     * requests, so this no longer blocks every off-origin subresource. Android
+     * cannot observe request class or response destination through
+     * WebResourceRequest, so the authoritative distinction between
+     * wallet-service response data and executable/runtime material stays
+     * producer-owned. Android therefore enforces only the boundary it can
+     * decide by itself: artifact acquisition is limited to the bundle, and no
+     * remote origin can become a trusted application or bridge origin.
+     */
+    internal fun shouldBlockSubresourceParts(
+        scheme: String?,
+        host: String?,
+        path: String?,
+        isMainFrame: Boolean
+    ): Boolean {
+        if (isTrustedPayloadParts(scheme, host, path)) {
             return false
         }
 
-        return !isMainFrame
+        // Main-frame navigation is decided by shouldOverrideUrlLoading.
+        if (isMainFrame) {
+            return false
+        }
+
+        // Android-owned: off-origin subresources must use HTTPS. Cleartext http,
+        // file://, content://, and every other scheme are refused here, which is
+        // what keeps wallet-service traffic free of cleartext responses.
+        return scheme != TRUSTED_SCHEME
+    }
+
+    fun shouldBlockSubresource(uri: Uri?, isMainFrame: Boolean): Boolean {
+        return shouldBlockSubresourceParts(uri?.scheme, uri?.host, uri?.path, isMainFrame)
     }
 
     internal fun shouldOpenExternallyParts(scheme: String?, host: String?, path: String?): Boolean {

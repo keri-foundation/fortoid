@@ -6,6 +6,18 @@
  * Maps FortWeb-owned runtime requirements (contracts/runtime-requirements.json)
  * to Fortoid-owned mechanism-first platform config (runtime-platform-config.json).
  *
+ * Contract generation: this validator consumes fort.runtime-requirements.v2 only.
+ * The v1 vocabulary (remote_network_prohibition, network_fetch, and the blanket
+ * loopback-origin prohibition) is obsolete and is rejected rather than
+ * reinterpreted, per the producer contract.
+ *
+ * Security ownership: FortWeb owns the semantic distinction between
+ * wallet-service response data and executable/runtime material. Android cannot
+ * observe request class or response destination through WebResourceRequest, so
+ * this validator must never claim Android proves that distinction. Android-owned
+ * guarantees here are limited to transport scheme, origin trust, bridge
+ * provenance, bundled asset delivery, and Service Worker prohibition.
+ *
  * Every capability and forbidden behavior must have exactly one registered
  * predicate. Unknown identifiers fail closed.
  *
@@ -24,19 +36,21 @@ const DEFAULT_PAYLOAD_DIR = path.join(REPO_ROOT, 'app/src/main/assets/payload');
 const CONFIG_PATH = path.join(REPO_ROOT, 'runtime-platform-config.json');
 const MANIFEST_FILENAME = 'manifest.json';
 const EXPECTED_RR_PATH = 'contracts/runtime-requirements.json';
-const EXPECTED_SCHEMA = 'fort.runtime-requirements.v1';
-const EXPECTED_VERSION = 1;
+const EXPECTED_SCHEMA = 'fort.runtime-requirements.v2';
+const EXPECTED_VERSION = 2;
 const EXPECTED_PRODUCER = 'fortweb';
 const EXPECTED_PROFILE = 'offline-runtime';
 const CONFIG_SCHEMA = 'fort.runtime-platform-config.v1';
+const WALLET_SERVICE_POLICY = 'wallet-service-https-only';
 
-// Canonical capability set — derived from the published v1 contract.
+// Canonical capability set — derived from the published v2 contract.
 // Every capability must be present and registered.
 const CANONICAL_CAPABILITIES = new Set([
   'stable_origin_across_launches',
   'persistent_storage_partition',
   'secure_context',
-  'remote_network_prohibition',
+  'remote_runtime_acquisition_prohibition',
+  'wallet_service_https',
   'bundled_assets_only',
   'worker_availability',
   'main_frame_provenance',
@@ -45,12 +59,12 @@ const CANONICAL_CAPABILITIES = new Set([
   'no_fallback_shell_substitution',
 ]);
 
-// Canonical forbidden-behavior set — derived from the published v1 contract.
+// Canonical forbidden-behavior set — derived from the published v2 contract.
 const CANONICAL_FORBIDDEN_BEHAVIORS = new Set([
-  'network_fetch',
+  'remote_runtime_acquisition',
+  'cleartext_wallet_service_traffic',
   'service_worker_registration',
   'general_purpose_browsing',
-  'localhost_or_loopback_origin',
   'http_fallback',
 ]);
 
@@ -98,12 +112,43 @@ const CAPABILITY_PREDICATES = {
     return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
   },
 
-  remote_network_prohibition(rr, cfg) {
-    const net = cfg?.network;
-    if (!net || net.policy !== 'deny-all') {
-      return { compatible: false, reason: 'network policy not declared as deny-all', evidence: 'config' };
+  remote_runtime_acquisition_prohibition(rr, cfg) {
+    const assets = cfg?.assets;
+    if (!assets || assets.source !== 'application-bundle') {
+      return { compatible: false, reason: 'asset source not declared as application-bundle', evidence: 'config' };
     }
-    // STATICALLY-VERIFIED: WebRequestPolicy blocks non-trusted subresources
+    if (assets.delivery !== 'webview-asset-loader') {
+      return { compatible: false, reason: 'asset delivery not declared as webview-asset-loader', evidence: 'config' };
+    }
+    const ep = cfg?.entrypoint;
+    if (ep?.source !== 'deterministic-constant') {
+      return { compatible: false, reason: 'entrypoint source not declared as deterministic-constant', evidence: 'config' };
+    }
+    // STATICALLY-VERIFIED: WebViewAssetLoader serves every runtime asset from
+    // the application bundle; mapPyodideCdnToLocal rewrites known Pyodide CDN
+    // acquisition to the bundled vendor copy so it never reaches the network;
+    // the Android-owned document-start guard blocks Service Worker registration,
+    // which would otherwise bypass WebViewClient subresource enforcement entirely.
+    return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
+  },
+
+  wallet_service_https(rr, cfg) {
+    const net = cfg?.network;
+    if (net?.policy !== WALLET_SERVICE_POLICY) {
+      return { compatible: false, reason: `network policy must be ${WALLET_SERVICE_POLICY}, got "${net?.policy || '(missing)'}"`, evidence: 'config' };
+    }
+    const schemes = net?.allowed_schemes;
+    if (!Array.isArray(schemes) || !schemes.includes('https')) {
+      return { compatible: false, reason: 'network.allowed_schemes must include https', evidence: 'config' };
+    }
+    if (schemes.includes('http')) {
+      return { compatible: false, reason: 'network.allowed_schemes must not include cleartext http', evidence: 'config' };
+    }
+    // STATICALLY-VERIFIED: AndroidManifest declares the INTERNET permission
+    // needed for HTTPS wallet-service transport, while
+    // android:usesCleartextTraffic stays false and no network-security-config
+    // exception is declared. Android does not gain trust here: an HTTPS
+    // wallet-service origin is not a trusted application or bridge origin.
     return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
   },
 
@@ -174,12 +219,40 @@ const CAPABILITY_PREDICATES = {
 
 const FORBIDDEN_PREDICATES = {
 
-  network_fetch(rr, cfg) {
-    const net = cfg?.network;
-    if (net?.policy === 'deny-all') {
-      return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
+  remote_runtime_acquisition(rr, cfg) {
+    const assets = cfg?.assets;
+    if (!assets || assets.source !== 'application-bundle') {
+      return { compatible: false, reason: 'asset source must be application-bundle to prohibit remote runtime acquisition', evidence: 'config' };
     }
-    return { compatible: false, reason: 'network policy must be deny-all to prohibit network_fetch', evidence: 'config' };
+    if (assets.delivery !== 'webview-asset-loader') {
+      return { compatible: false, reason: 'asset delivery must be webview-asset-loader to prohibit remote runtime acquisition', evidence: 'config' };
+    }
+    if (cfg?.entrypoint?.source !== 'deterministic-constant') {
+      return { compatible: false, reason: 'deterministic entrypoint is required to prohibit remote runtime acquisition', evidence: 'config' };
+    }
+    // STATICALLY-VERIFIED: remote runtime material has no acquisition path in
+    // the wrapper. WebViewAssetLoader serves artifacts from the bundle, the known
+    // Pyodide CDN acquisition path is redirected to the bundled vendor copy, and
+    // Service Worker registration is blocked by the Android-owned document-start
+    // guard. The producer, not Android, owns the authoritative
+    // data-versus-code distinction; no path or extension heuristic is used here
+    // because Android cannot observe request class and a heuristic would be
+    // bypassable, which is the same over-broad coupling v2 removed.
+    return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
+  },
+
+  cleartext_wallet_service_traffic(rr, cfg) {
+    const net = cfg?.network;
+    if (net?.policy !== WALLET_SERVICE_POLICY) {
+      return { compatible: false, reason: `network policy must be ${WALLET_SERVICE_POLICY} to reject cleartext wallet-service traffic, got "${net?.policy || '(missing)'}"`, evidence: 'config' };
+    }
+    if (!Array.isArray(net?.allowed_schemes) || net.allowed_schemes.includes('http')) {
+      return { compatible: false, reason: 'network.allowed_schemes must not include cleartext http', evidence: 'config' };
+    }
+    // STATICALLY-VERIFIED: android:usesCleartextTraffic="false" and
+    // WebRequestPolicy.shouldBlockSubresourceParts refuses every non-HTTPS
+    // off-origin subresource before the WebView can attempt a cleartext request.
+    return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
   },
 
   service_worker_registration(rr, cfg) {
@@ -202,14 +275,6 @@ const FORBIDDEN_PREDICATES = {
   general_purpose_browsing(rr, cfg) {
     // External URLs are opened via Intent, not in the WebView.
     return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
-  },
-
-  localhost_or_loopback_origin(rr, cfg) {
-    const origin = cfg?.origin;
-    if (origin?.host === 'appassets.androidplatform.net' && origin?.scheme === 'https') {
-      return { compatible: true, evidence: 'STATICALLY-VERIFIED' };
-    }
-    return { compatible: false, reason: 'origin must be https://appassets.androidplatform.net', evidence: 'config' };
   },
 
   http_fallback(rr, cfg) {
@@ -330,7 +395,7 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
   // Unknown capabilities (not in canonical set)
   for (const key of declaredCaps) {
     if (!CANONICAL_CAPABILITIES.has(key)) {
-      capResults.push({ capability: key, compatible: false, reason: `unknown capability — not in canonical v1 vocabulary`, evidence: 'FAIL-CLOSED' });
+      capResults.push({ capability: key, compatible: false, reason: `unknown capability — not in canonical v2 vocabulary`, evidence: 'FAIL-CLOSED' });
       continue;
     }
     if (!registeredCaps.has(key)) {
@@ -382,7 +447,7 @@ export async function validateCompatibility(payloadDir = DEFAULT_PAYLOAD_DIR, co
 
   for (const fb of forbidden) {
     if (!CANONICAL_FORBIDDEN_BEHAVIORS.has(fb)) {
-      fbResults.push({ forbidden_behavior: fb, compatible: false, reason: `unknown forbidden behavior — not in canonical v1 vocabulary`, evidence: 'FAIL-CLOSED' });
+      fbResults.push({ forbidden_behavior: fb, compatible: false, reason: `unknown forbidden behavior — not in canonical v2 vocabulary`, evidence: 'FAIL-CLOSED' });
       continue;
     }
     if (!registeredFB.has(fb)) {

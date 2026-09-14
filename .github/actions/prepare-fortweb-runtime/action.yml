@@ -81,9 +81,9 @@ runs:
       shell: bash
       working-directory: .deps/fortweb
       env:
-        FORTWEB_RUNTIME_SOURCE_URL: https://github.com/keri-foundation/fortweb/releases/download/runtime-source-pyodide-314-20260909/runtime-source.tar.gz
-        FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256: e04833249eec88596e0f2f88d32baa6d5fae6b2e964996587061ddac4bd78c72
-        FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 87bcc689d7778840a76284471ff599cef21be41df2b429724f7f4fdc5f022135
+        FORTWEB_RUNTIME_SOURCE_URL: https://github.com/keri-foundation/fortweb/releases/download/runtime-source-pyodide-314-hio-0.7.20-20260910/runtime-source.tar.gz
+        FORTWEB_RUNTIME_SOURCE_ARCHIVE_SHA256: 394db70ecbed6e5718e6ec0afbcb43eaf6384e2ab78218e55067ec9e5d83fb34
+        FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 371ef8cb8c6641b68afe6799931678435e2a629dcf4aa7ba2e344efab5a10f32
       run: |
         python3 scripts/acquire_runtime_source.py \
           --url "$FORTWEB_RUNTIME_SOURCE_URL" \
@@ -105,7 +105,7 @@ runs:
       working-directory: .deps/fortweb
       env:
         FORTWEB_RUNTIME_SOURCE_MANIFEST: build/runtime-source/manifest.json
-        FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 87bcc689d7778840a76284471ff599cef21be41df2b429724f7f4fdc5f022135
+        FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 371ef8cb8c6641b68afe6799931678435e2a629dcf4aa7ba2e344efab5a10f32
       run: npm run build:runtime
 
     - name: Generate canonical runtime ZIP
@@ -113,7 +113,7 @@ runs:
       working-directory: .deps/fortweb
       env:
         FORTWEB_RUNTIME_SOURCE_MANIFEST: build/runtime-source/manifest.json
-        FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 87bcc689d7778840a76284471ff599cef21be41df2b429724f7f4fdc5f022135
+        FORTWEB_RUNTIME_SOURCE_MANIFEST_SHA256: 371ef8cb8c6641b68afe6799931678435e2a629dcf4aa7ba2e344efab5a10f32
       run: |
         set -euo pipefail
         # package:runtime creates the output dir itself (non-recursive mkdir),

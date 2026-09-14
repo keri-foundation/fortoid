@@ -3,7 +3,7 @@
   "version": 1,
   "platform": "android-webview",
   "requirements_compatibility": {
-    "supported_schemas": ["fort.runtime-requirements.v1"],
+    "supported_schemas": ["fort.runtime-requirements.v2"],
     "supported_profiles": ["offline-runtime"]
   },
   "origin": {
@@ -12,7 +12,7 @@
     "stability": "fixed-across-launches"
   },
   "network": {
-    "policy": "deny-all",
+    "policy": "wallet-service-https-only",
     "allowed_schemes": ["https"]
   },
   "assets": {

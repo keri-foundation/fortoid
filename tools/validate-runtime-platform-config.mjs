@@ -32,11 +32,15 @@ const FIELD_SCHEMA = {
   entrypoint:         { type: 'object', required: true },
 };
 
-const SUPPORTED_SCHEMAS = ['fort.runtime-requirements.v1'];
+const SUPPORTED_SCHEMAS = ['fort.runtime-requirements.v2'];
 const SUPPORTED_PROFILES = ['offline-runtime'];
 
 const ORIGIN_STABILITIES = ['fixed-across-launches'];
-const NETWORK_POLICIES = ['deny-all'];
+// The v1 'deny-all' policy is no longer an accepted declaration: the v2
+// contract permits HTTPS wallet-service data while prohibiting remote runtime
+// acquisition and cleartext service traffic. 'deny-all' would silently
+// reinterpret v2 requirements, so it must fail closed here.
+const NETWORK_POLICIES = ['wallet-service-https-only'];
 const ASSET_SOURCES = ['application-bundle'];
 const ASSET_DELIVERIES = ['webview-asset-loader', 'custom-scheme-handler'];
 const WORKER_FRAMEWORKS = ['webview-javascript', 'wkwebview-javascript'];

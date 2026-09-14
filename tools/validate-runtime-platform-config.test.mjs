@@ -130,11 +130,41 @@ describe('nested validation', () => {
   it('rejects duplicate list entry in supported_schemas', () => {
     const config = loadGood();
     config.requirements_compatibility.supported_schemas = [
-      'fort.runtime-requirements.v1',
-      'fort.runtime-requirements.v1',
+      'fort.runtime-requirements.v2',
+      'fort.runtime-requirements.v2',
     ];
     const errors = validatePlatformConfig(config);
     assert.ok(errors.some(e => e.includes('duplicate')));
+  });
+
+  it('rejects the obsolete v1 requirements schema', () => {
+    const config = loadGood();
+    config.requirements_compatibility.supported_schemas = ['fort.runtime-requirements.v1'];
+    const errors = validatePlatformConfig(config);
+    assert.ok(errors.some(e => e.includes('unsupported schema')));
+  });
+
+  it('rejects the obsolete deny-all network policy', () => {
+    // The v2 contract permits HTTPS wallet-service data, so 'deny-all' would
+    // silently reinterpret v2 requirements. It must fail closed.
+    const config = loadGood();
+    config.network.policy = 'deny-all';
+    const errors = validatePlatformConfig(config);
+    assert.ok(errors.some(e => e.includes('network.policy')));
+  });
+
+  it('rejects an unknown network policy', () => {
+    const config = loadGood();
+    config.network.policy = 'allow-anything';
+    const errors = validatePlatformConfig(config);
+    assert.ok(errors.some(e => e.includes('network.policy')));
+  });
+
+  it('checked-in config declares the v2 schema and wallet-service HTTPS policy', () => {
+    const config = loadGood();
+    assert.deepStrictEqual(config.requirements_compatibility.supported_schemas, ['fort.runtime-requirements.v2']);
+    assert.strictEqual(config.network.policy, 'wallet-service-https-only');
+    assert.deepStrictEqual(config.network.allowed_schemes, ['https']);
   });
 
   it('rejects empty string in allowed_schemes', () => {

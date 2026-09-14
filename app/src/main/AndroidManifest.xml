@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Required for HTTPS wallet-service data transport (KF boot, witnesses,
+         watchers, account operations, and OOBIs) under the v2 runtime
+         requirements contract. Cleartext transport stays prohibited. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
