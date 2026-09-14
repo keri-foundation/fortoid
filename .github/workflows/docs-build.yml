@@ -1,0 +1,36 @@
+name: Docs build
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    name: Sphinx docs build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install docs requirements
+        run: pip install -r docs/requirements.txt
+
+      - name: Build docs (warnings as errors)
+        run: sphinx-build -b html -W --keep-going docs docs/_build
