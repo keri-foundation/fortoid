@@ -51,6 +51,14 @@ jobs:
               raise SystemExit("Staged payload still exists after quarantine")
           PY
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Locked payload recovery contract tests
+        run: npm run test:sync-contract
+
       - name: Run JVM unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
