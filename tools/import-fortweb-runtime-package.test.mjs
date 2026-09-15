@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import {
   validateEntries,
   validateManifestIdentity,
+  validateManifestLock,
   validateManifestFiles,
   validateManifestContracts,
   validateChecksums,
@@ -590,5 +591,151 @@ with zipfile.ZipFile('${badZip}', 'r') as zf:
       () => importPackage(badZip, destDir),
       /symlink not allowed|inventory closure/,
     );
+  });
+});
+
+// ── Lock identity ────────────────────────────────────────────────────────────
+// A package is only acceptable when its manifest fortweb_commit_sha equals the
+// Fortoid runtime lock (config/fortweb-runtime.json).
+
+describe('validateManifestLock', () => {
+  const LOCK = 'a'.repeat(40);
+
+  it('accepts a commit that matches the lock', () => {
+    assert.deepStrictEqual(validateManifestLock({ fortweb_commit_sha: LOCK }, LOCK), []);
+  });
+
+  it('is a no-op when no lock expectation is supplied', () => {
+    assert.deepStrictEqual(validateManifestLock({ fortweb_commit_sha: LOCK }, undefined), []);
+    assert.deepStrictEqual(validateManifestLock({ fortweb_commit_sha: LOCK }, null), []);
+    assert.deepStrictEqual(validateManifestLock({ fortweb_commit_sha: LOCK }, ''), []);
+  });
+
+  it('rejects a manifest commit that does not match the lock', () => {
+    const errs = validateManifestLock({ fortweb_commit_sha: LOCK }, 'b'.repeat(40));
+    assert.strictEqual(errs.length, 1);
+    assert.match(errs[0], /does not match the Fortoid lock/);
+  });
+
+  it('rejects a malformed expected lock commit', () => {
+    assert.match(validateManifestLock({ fortweb_commit_sha: LOCK }, 'main')[0], /expected FortWeb commit/);
+    assert.match(validateManifestLock({ fortweb_commit_sha: LOCK }, 'abc123')[0], /expected FortWeb commit/);
+    assert.match(validateManifestLock({ fortweb_commit_sha: LOCK }, 'A'.repeat(40))[0], /expected FortWeb commit/);
+  });
+
+  it('rejects a malformed manifest commit', () => {
+    assert.match(validateManifestLock({ fortweb_commit_sha: 'not-a-sha' }, LOCK)[0], /fortweb_commit_sha/);
+    assert.match(validateManifestLock({ fortweb_commit_sha: 'A'.repeat(40) }, LOCK)[0], /fortweb_commit_sha/);
+  });
+
+  it('rejects a missing manifest commit', () => {
+    assert.match(validateManifestLock({}, LOCK)[0], /fortweb_commit_sha/);
+    assert.match(validateManifestLock({ fortweb_commit_sha: '' }, LOCK)[0], /fortweb_commit_sha/);
+  });
+});
+
+describe('importPackage lock enforcement', () => {
+  const IMPORTER_CLI = 'tools/import-fortweb-runtime-package.mjs';
+
+  it('accepts a package whose commit matches the lock', async () => {
+    const workDir = nextDir('lock-match');
+    const destDir = path.join(workDir, 'payload');
+    const { zipPath, manifest } = await makeCanonicalZip(nextDir('lock-match-zip'));
+    const result = await importPackage(zipPath, destDir, {
+      expectedFortwebCommit: manifest.fortweb_commit_sha,
+    });
+    assert.ok(result.includes('staged'));
+    assert.ok(existsSync(path.join(destDir, 'manifest.json')));
+  });
+
+  it('rejects a mismatched commit before touching the staged payload', async () => {
+    const workDir = nextDir('lock-mismatch');
+    const destDir = path.join(workDir, 'payload');
+
+    // Establish a known-good payload that must survive the rejected import.
+    const srcDir = path.join(workDir, 'prior');
+    await mkdir(path.join(srcDir, 'app'), { recursive: true });
+    await writeFile(path.join(srcDir, 'app/index.html'), 'known-good');
+    await activatePayload(srcDir, destDir, 'fortweb-runtime');
+
+    const { zipPath } = await makeCanonicalZip(nextDir('lock-mismatch-zip'));
+    await assert.rejects(
+      () => importPackage(zipPath, destDir, { expectedFortwebCommit: 'b'.repeat(40) }),
+      /does not match the Fortoid lock/,
+    );
+
+    assert.strictEqual(
+      await readFile(path.join(destDir, 'app/index.html'), 'utf-8'),
+      'known-good',
+      'a rejected import must not alter the staged payload',
+    );
+    const parentEntries = await readdir(path.dirname(destDir));
+    assert.ok(!parentEntries.some(e => e.startsWith('.payload-candidate')), 'no candidate residue');
+    assert.ok(!parentEntries.some(e => e.startsWith('.payload-backup')), 'no backup residue');
+  });
+
+  it('rejects a malformed expected lock commit', async () => {
+    const workDir = nextDir('lock-malformed-expected');
+    const { zipPath } = await makeCanonicalZip(nextDir('lock-malformed-zip'));
+    await assert.rejects(
+      () => importPackage(zipPath, path.join(workDir, 'payload'), { expectedFortwebCommit: 'main' }),
+      /expected FortWeb commit/,
+    );
+  });
+
+  async function buildLockVariantZip(label, mutate) {
+    const zipDir = nextDir(label);
+    const m = makeManifest();
+    mutate(m);
+    const rrContent = JSON.stringify(makeRR());
+    const idxContent = `idx-${testSeq}`;
+    m.files = [
+      { path: 'app/index.html', sha256: sha256(Buffer.from(idxContent)), bytes: Buffer.byteLength(idxContent) },
+      { path: 'contracts/runtime-requirements.json', sha256: sha256(Buffer.from(rrContent)), bytes: Buffer.byteLength(rrContent) },
+    ];
+    const manifestContent = JSON.stringify(m);
+    await makeZip(zipDir, {
+      'fortweb-runtime/manifest.json': manifestContent,
+      'fortweb-runtime/checksums.sha256': `${sha256(Buffer.from(manifestContent))}  manifest.json\n`,
+      'fortweb-runtime/app/index.html': idxContent,
+      'fortweb-runtime/contracts/runtime-requirements.json': rrContent,
+    });
+    return path.join(zipDir, 'package.zip');
+  }
+
+  it('rejects a package whose manifest commit is malformed', async () => {
+    const zipPath = await buildLockVariantZip('lock-bad-manifest', (m) => {
+      m.fortweb_commit_sha = 'not-a-sha';
+    });
+    await assert.rejects(
+      () => importPackage(zipPath, path.join(nextDir('lock-bad-manifest-dest'), 'payload'), {
+        expectedFortwebCommit: 'a'.repeat(40),
+      }),
+      /fortweb_commit_sha/,
+    );
+  });
+
+  it('rejects a package whose manifest commit is missing', async () => {
+    const zipPath = await buildLockVariantZip('lock-missing-manifest', (m) => {
+      delete m.fortweb_commit_sha;
+    });
+    await assert.rejects(
+      () => importPackage(zipPath, path.join(nextDir('lock-missing-dest'), 'payload'), {
+        expectedFortwebCommit: 'a'.repeat(40),
+      }),
+      /fortweb_commit_sha/,
+    );
+  });
+
+  it('CLI requires --expected-fortweb-commit', () => {
+    let caught = null;
+    try {
+      execFileSync(process.execPath, [IMPORTER_CLI, 'some.zip'], { encoding: 'utf-8', stdio: 'pipe' });
+    } catch (e) {
+      caught = e;
+    }
+    assert.ok(caught, 'the CLI must fail when the lock commit is not supplied');
+    assert.strictEqual(caught.status, 2);
+    assert.match(String(caught.stderr), /--expected-fortweb-commit/);
   });
 });

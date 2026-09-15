@@ -12,7 +12,13 @@
  * inventory.
  *
  * Usage:
- *   node tools/import-fortweb-runtime-package.mjs <runtime-package.zip>
+ *   node tools/import-fortweb-runtime-package.mjs \
+ *     --expected-fortweb-commit <40-hex> <runtime-package.zip>
+ *
+ * The expected FortWeb commit is required. A package is accepted only when its
+ * manifest `fortweb_commit_sha` equals the Fortoid runtime lock
+ * (config/fortweb-runtime.json). Read the lock with
+ * tools/read-fortweb-runtime-lock.mjs, or use ./sync-payload.sh.
  */
 
 import { createHash } from 'node:crypto';
@@ -116,6 +122,27 @@ export function validateManifestIdentity(manifest) {
   if (!manifest.entrypoint || typeof manifest.entrypoint !== 'string')
     e.push('manifest.json: missing entrypoint');
   return e;
+}
+
+// config/fortweb-runtime.json is the authority for which FortWeb revision Android
+// consumes. The producer's manifest carries fortweb_commit_sha, so the caller can
+// require the incoming package to have been built by exactly that revision. This is a
+// trust decision and must be settled before activatePayload() touches the payload.
+export function validateManifestLock(manifest, expectedFortwebCommit) {
+  if (expectedFortwebCommit === undefined || expectedFortwebCommit === null || expectedFortwebCommit === '') {
+    return [];
+  }
+  if (typeof expectedFortwebCommit !== 'string' || !/^[0-9a-f]{40}$/.test(expectedFortwebCommit)) {
+    return [`expected FortWeb commit must be a full 40-char lowercase SHA, got "${expectedFortwebCommit}"`];
+  }
+  const actual = manifest && manifest.fortweb_commit_sha;
+  if (typeof actual !== 'string' || !/^[0-9a-f]{40}$/.test(actual)) {
+    return [`manifest.json: fortweb_commit_sha must be a full 40-char lowercase SHA, got "${actual || '(missing)'}"`];
+  }
+  if (actual !== expectedFortwebCommit) {
+    return [`manifest.json: fortweb_commit_sha "${actual}" does not match the Fortoid lock "${expectedFortwebCommit}"`];
+  }
+  return [];
 }
 
 export function validateManifestFiles(manifest) {
@@ -308,7 +335,7 @@ export async function activatePayload(extractedDir, destDir, packageName, opts =
 
 // ── Core import (exported, no process.exit) ─────────────────────────────────
 
-export async function importPackage(zipPath, destDir = PAYLOAD_DEST) {
+export async function importPackage(zipPath, destDir = PAYLOAD_DEST, opts = {}) {
   if (!existsSync(zipPath)) throw new ImportError(`ZIP not found: ${zipPath}`);
 
   const entries = unzipList(zipPath);
@@ -333,6 +360,10 @@ export async function importPackage(zipPath, destDir = PAYLOAD_DEST) {
 
     const idErr = validateManifestIdentity(manifest);
     if (idErr.length) throw new ImportError(`manifest:\n  - ${idErr.join('\n  - ')}`);
+    // Lock binding runs before any other content work so a mismatch can never reach
+    // the activation path.
+    const lockErr = validateManifestLock(manifest, opts.expectedFortwebCommit);
+    if (lockErr.length) throw new ImportError(`lock:\n  - ${lockErr.join('\n  - ')}`);
     const fileErr = validateManifestFiles(manifest);
     if (fileErr.length) throw new ImportError(`manifest.files:\n  - ${fileErr.join('\n  - ')}`);
     const ctErr = validateManifestContracts(manifest);
@@ -374,11 +405,30 @@ export async function importPackage(zipPath, destDir = PAYLOAD_DEST) {
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
+const IMPORT_USAGE = 'usage: node tools/import-fortweb-runtime-package.mjs --expected-fortweb-commit <40-hex> <zip>';
+
 async function main() {
-  const zipPath = process.argv[2];
-  if (!zipPath) { console.error('usage: node tools/import-fortweb-runtime-package.mjs <zip>'); process.exit(2); }
+  const argv = process.argv.slice(2);
+  let zipPath = '';
+  let expectedFortwebCommit = '';
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--expected-fortweb-commit') {
+      expectedFortwebCommit = argv[i + 1] || '';
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--')) { console.error(IMPORT_USAGE); process.exit(2); }
+    if (zipPath) { console.error('usage: only one package path may be supplied'); process.exit(2); }
+    zipPath = arg;
+  }
+  if (!zipPath || !expectedFortwebCommit) {
+    console.error(IMPORT_USAGE);
+    console.error('       --expected-fortweb-commit is required so the package must match config/fortweb-runtime.json');
+    process.exit(2);
+  }
   try {
-    const msg = await importPackage(zipPath);
+    const msg = await importPackage(zipPath, undefined, { expectedFortwebCommit });
     console.error(`[import-fortweb-runtime-package] ${msg}`);
     process.exit(0);
   } catch (e) {

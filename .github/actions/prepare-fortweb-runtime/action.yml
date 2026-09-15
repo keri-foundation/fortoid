@@ -147,7 +147,7 @@ runs:
 
     - name: Import runtime package
       shell: bash
-      run: node tools/import-fortweb-runtime-package.mjs "${{ steps.zip.outputs.path }}"
+      run: node tools/import-fortweb-runtime-package.mjs --expected-fortweb-commit "${{ steps.lock.outputs.commit }}" "${{ steps.zip.outputs.path }}"
 
     - name: Validate staged payload
       shell: bash
