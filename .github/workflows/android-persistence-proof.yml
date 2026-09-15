@@ -1,0 +1,198 @@
+name: Android API 36 Persistence Proof
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: android-persistence-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  persistence-proof:
+    name: Android API 36 persistence proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out Fortoid
+        uses: actions/checkout@v4
+
+      - name: Prepare canonical FortWeb runtime
+        uses: ./.github/actions/prepare-fortweb-runtime
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm || echo "KVM not available"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+
+      - name: Install system image and create AVD
+        run: |
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "=== Available device profiles ==="
+          avdmanager list device | grep -E '^id:|Name:|OEM '
+          echo "=== Requiring pixel_8 ==="
+          if ! avdmanager list device | grep -q 'id:.*pixel_8'; then
+            echo "FAIL: pixel_8 not found in device catalog"
+            avdmanager list device
+            exit 1
+          fi
+          echo "y" | sdkmanager "system-images;android-36;google_apis;x86_64"
+          echo "no" | avdmanager create avd \
+            --name "persist-test" \
+            --package "system-images;android-36;google_apis;x86_64" \
+            --device "pixel_8" \
+            --force
+          echo "=== Created AVDs ==="
+          $ANDROID_HOME/emulator/emulator -list-avds
+          if ! $ANDROID_HOME/emulator/emulator -list-avds | grep -q 'persist-test'; then
+            echo "FAIL: AVD persist-test was not created"
+            exit 1
+          fi
+
+      - name: Start emulator
+        timeout-minutes: 8
+        run: |
+          $ANDROID_HOME/emulator/emulator \
+            -avd persist-test \
+            -no-window -no-audio -no-boot-anim \
+            -gpu swiftshader_indirect \
+            -read-only -delay-adb \
+            &
+          adb wait-for-device
+          adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+          adb shell input keyevent 82
+          echo "Emulator ready"
+
+      - name: Verify API 36 WebView baseline
+        run: |
+          SDK=$(adb shell getprop ro.build.version.sdk)
+          if [ "$SDK" != "36" ]; then echo "FAIL: expected SDK 36, got $SDK"; exit 1; fi
+          echo "SDK: $SDK — OK"
+          echo "Baseline: API 36 WebView on pixel_8 AVD"
+
+      - name: Build APKs (once)
+        run: |
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+
+      - name: Install APKs (once)
+        run: |
+          adb install -r app/build/outputs/apk/debug/app-debug.apk
+          adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+
+      # ── Phase A: Write ────────────────────────────────────────────────
+
+      - name: Generate persistence key/value
+        id: genkey
+        run: |
+          KEY="probe-$(date +%s)-$RANDOM"
+          VALUE="val-$(uuidgen)"
+          echo "key=$KEY" >> $GITHUB_OUTPUT
+          echo "value=$VALUE" >> $GITHUB_OUTPUT
+          echo "KEY=$KEY VALUE=$VALUE"
+
+      - name: Clear logcat before write
+        run: adb logcat -c
+
+      - name: Run PersistenceWriteTest
+        id: write
+        run: |
+          OUTPUT=$(adb shell am instrument -w -r \
+            -e persistenceKey "${{ steps.genkey.outputs.key }}" \
+            -e persistenceValue "${{ steps.genkey.outputs.value }}" \
+            -e class org.kerifoundation.fortandroid.PersistenceWriteTest \
+            org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner 2>&1)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "OK (" || { echo "FAIL: write phase did not report OK"; exit 1; }
+          # Parse PID from instrumentation status Bundle: INSTRUMENTATION_STATUS: WRITE_PID=12345
+          WRITE_PID=$(echo "$OUTPUT" | grep -oP 'INSTRUMENTATION_STATUS:\s*WRITE_PID=\K\d+' || echo "")
+          if [ -z "$WRITE_PID" ]; then echo "FAIL: could not capture WRITE_PID from instrumentation status"; exit 1; fi
+          if ! [[ "$WRITE_PID" =~ ^[1-9][0-9]*$ ]]; then echo "FAIL: WRITE_PID is not a positive integer: $WRITE_PID"; exit 1; fi
+          echo "write_pid=$WRITE_PID" >> $GITHUB_OUTPUT
+          echo "Write PID: $WRITE_PID"
+
+      - name: Capture logcat on write failure
+        if: failure() && steps.write.outcome == 'failure'
+        run: |
+          echo "=== logcat (FortAndroidPersist) ==="
+          adb logcat -d -s FortAndroidPersist:* 2>/dev/null || echo "(no FortAndroidPersist logs)"
+          echo "=== logcat (chromium) ==="
+          adb logcat -d -s chromium:* 2>/dev/null | tail -50 || echo "(no chromium logs)"
+          echo "=== logcat (AndroidRuntime ERROR) ==="
+          adb logcat -d -s AndroidRuntime:E 2>/dev/null | tail -20 || echo "(no AndroidRuntime errors)"
+
+      - name: Force-stop and verify original PID absent
+        run: |
+          WRITE_PID="${{ steps.write.outputs.write_pid }}"
+          if adb shell ps -p "$WRITE_PID" > /dev/null 2>&1; then
+            echo "WRITE_PID $WRITE_PID still alive — force-stopping"
+          else
+            echo "WRITE_PID $WRITE_PID already absent after Phase A"
+            echo "Phase-A process boundary already observed"
+          fi
+          adb shell am force-stop org.kerifoundation.fortandroid
+          sleep 3
+          if adb shell ps -p "$WRITE_PID" > /dev/null 2>&1; then
+            echo "FAIL: PID $WRITE_PID still running after force-stop"
+            exit 1
+          fi
+          echo "PID $WRITE_PID confirmed absent — OK"
+
+      - name: Run PersistenceReadTest
+        id: read
+        run: |
+          OUTPUT=$(adb shell am instrument -w -r \
+            -e persistenceKey "${{ steps.genkey.outputs.key }}" \
+            -e persistenceValue "${{ steps.genkey.outputs.value }}" \
+            -e class org.kerifoundation.fortandroid.PersistenceReadTest \
+            org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner 2>&1)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "OK (" || { echo "FAIL: read phase did not report OK"; exit 1; }
+          # Parse PID from instrumentation status Bundle: INSTRUMENTATION_STATUS: READ_PID=54321
+          READ_PID=$(echo "$OUTPUT" | grep -oP 'INSTRUMENTATION_STATUS:\s*READ_PID=\K\d+' || echo "")
+          if [ -z "$READ_PID" ]; then echo "FAIL: could not capture READ_PID from instrumentation status"; exit 1; fi
+          if ! [[ "$READ_PID" =~ ^[1-9][0-9]*$ ]]; then echo "FAIL: READ_PID is not a positive integer: $READ_PID"; exit 1; fi
+          echo "read_pid=$READ_PID" >> $GITHUB_OUTPUT
+          echo "Read PID: $READ_PID"
+
+      - name: Verify PID changed
+        run: |
+          WRITE_PID="${{ steps.write.outputs.write_pid }}"
+          READ_PID="${{ steps.read.outputs.read_pid }}"
+          echo "Write PID: $WRITE_PID"
+          echo "Read PID: $READ_PID"
+          if [ "$WRITE_PID" = "$READ_PID" ]; then
+            echo "FAIL: write and read PIDs are identical — process was not restarted"
+            exit 1
+          fi
+          echo "PASS: process restart confirmed (write PID $WRITE_PID != read PID $READ_PID)"
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: persistence-proof-reports
+          path: app/build/outputs/
+          retention-days: 7

@@ -1,0 +1,125 @@
+name: Android API 36 Service Worker Prohibition Proof
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: android-sw-prohibition-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  service-worker-proof:
+    name: Android API 36 service worker prohibition proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out Fortoid
+        uses: actions/checkout@v4
+
+      - name: Prepare canonical FortWeb runtime
+        uses: ./.github/actions/prepare-fortweb-runtime
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM for hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm || echo "KVM not available"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+
+      - name: Install system image and create AVD
+        run: |
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "=== Requiring pixel_8 ==="
+          if ! avdmanager list device | grep -q 'id:.*pixel_8'; then
+            echo "FAIL: pixel_8 not found in device catalog"
+            exit 1
+          fi
+          echo "y" | sdkmanager "system-images;android-36;google_apis;x86_64"
+          echo "no" | avdmanager create avd \
+            --name "sw-test" \
+            --package "system-images;android-36;google_apis;x86_64" \
+            --device "pixel_8" \
+            --force
+          if ! $ANDROID_HOME/emulator/emulator -list-avds | grep -q 'sw-test'; then
+            echo "FAIL: AVD sw-test was not created"
+            exit 1
+          fi
+
+      - name: Start emulator
+        timeout-minutes: 8
+        run: |
+          $ANDROID_HOME/emulator/emulator \
+            -avd sw-test \
+            -no-window \
+            -no-audio \
+            -no-boot-anim \
+            -gpu swiftshader_indirect \
+            -read-only \
+            -delay-adb \
+            &
+          adb wait-for-device
+          adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+          adb shell input keyevent 82
+          echo "Emulator ready"
+
+      - name: Verify API 36 WebView baseline
+        run: |
+          SDK=$(adb shell getprop ro.build.version.sdk)
+          if [ "$SDK" != "36" ]; then
+            echo "FAIL: expected SDK 36, got $SDK"
+            exit 1
+          fi
+          echo "SDK level: $SDK — OK"
+          echo "Baseline: API 36 WebView on pixel_8 AVD"
+
+      - name: Build and run instrumentation tests
+        run: ./gradlew :app:connectedDebugAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.ServiceWorkerProhibitionProofTest
+
+      - name: Verify service worker JUnit XML
+        if: always()
+        run: |
+          python3 tools/verify-junit-suite.py \
+            --results-dir app/build/outputs/androidTest-results/connected \
+            --suite org.kerifoundation.fortandroid.ServiceWorkerProhibitionProofTest \
+            --tests 1
+
+      - name: Capture bounded diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          if timeout 5s adb get-state >/dev/null 2>&1; then
+            echo "=== logcat (bounded) ==="
+            timeout 10s adb logcat -d -s ServiceWorkerProhibitionProof:* chromium:* 2>/dev/null | tail -40 || echo "(no logcat output)"
+          else
+            echo "(emulator unavailable; skipping logcat)"
+          fi
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-worker-proof-reports
+          path: app/build/outputs/androidTest-results/
+          retention-days: 7

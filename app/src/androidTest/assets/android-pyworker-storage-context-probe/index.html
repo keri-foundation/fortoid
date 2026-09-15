@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>PyWorker Storage Context Diagnostic</title>
+<script>
+// Non-module bootstrap: install observability BEFORE any PyScript module
+// loading. The previous version used a static-import <script type="module">,
+// whose top-level imports evaluate before the module body can install the
+// watchdog/error handlers — a module-load failure would leave Kotlin polling a
+// permanent "loading" state.
+window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__ = {
+    state: "loading",
+    stage: "BOOTSTRAP_INSTALLED"
+};
+
+function setStage(stage) {
+    var d = window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__;
+    if (d && d.state === "loading") {
+        d.stage = stage;
+    }
+}
+
+function fail(category, message, error) {
+    var d = window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__ || { state: "loading" };
+    d.state = "error";
+    d.category = category;
+    if (!d.stage) {
+        d.stage = "UNKNOWN";
+    }
+    if (message !== undefined && message !== null) {
+        d.message = String(message);
+    }
+    if (error && error.constructor) {
+        d.errorClass = error.constructor.name;
+    }
+    window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__ = d;
+}
+
+// Page watchdog (120s) stays shorter than the Kotlin outer deadline (240s), so
+// the page always reports a terminal state before Kotlin gives up.
+setTimeout(function () {
+    var d = window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__;
+    if (d && d.state === "loading") {
+        fail("PROBE_TIMEOUT", "diagnostic did not reach a terminal state within 120s");
+    }
+}, 120000);
+
+window.addEventListener("error", function (event) {
+    var message = (event && event.message) ? event.message : String(event);
+    fail("PAGE_ERROR", message, event && event.error);
+});
+
+window.addEventListener("unhandledrejection", function (event) {
+    var reason = event && event.reason;
+    var message = (reason && reason.message) ? reason.message : String(reason);
+    fail("UNHANDLED_REJECTION", message, reason);
+});
+
+(async function () {
+    var PyWorker;
+    var parseToml;
+
+    setStage("MODULE_IMPORT_STARTED");
+    try {
+        var core = await import("/vendor/pyscript/2025.11.2/core.js");
+        var toml = await import("/vendor/pyscript/2025.11.2/toml-BK2RWy-G.js");
+        PyWorker = core.PyWorker;
+        parseToml = toml.parse;
+        setStage("MODULE_IMPORT_SUCCEEDED");
+    } catch (error) {
+        fail("MODULE_IMPORT_FAILED", error && error.message ? error.message : String(error), error);
+        return;
+    }
+
+    try {
+        var originContract = window.__FORT_RUNTIME_ORIGIN__;
+        setStage("ORIGIN_CONTRACT_CHECK");
+        if (!originContract || !originContract.configUrl) {
+            fail("ORIGIN_CONTRACT_MISSING", "window.__FORT_RUNTIME_ORIGIN__ incomplete");
+            return;
+        }
+
+        var configUrl = originContract.configUrl;
+        setStage("CONFIG_FETCH_STARTED");
+        var response = await fetch(configUrl);
+        if (!response.ok) {
+            fail("CONFIG_FETCH_FAILED", "HTTP " + response.status + " for " + configUrl);
+            return;
+        }
+        setStage("CONFIG_FETCHED");
+
+        var config = parseToml(await response.text());
+        setStage("CONFIG_PARSED");
+        // Producer-specific worker file mounts are irrelevant to this
+        // standalone diagnostic; drop them to avoid spurious fetches.
+        delete config.files;
+        config.fort_runtime_origin = originContract;
+
+        var workerUrl = "https://appassets.androidplatform.net/android-pyworker-storage-context-probe/storage-context-probe.py";
+        setStage("PYWORKER_STARTING");
+        var worker = await PyWorker(workerUrl, {
+            type: "pyodide",
+            configURL: configUrl,
+            config: config
+        });
+        setStage("PYWORKER_READY");
+
+        setStage("DIAGNOSTIC_RPC_STARTED");
+        var diagnostic = await worker.sync.diagnostic();
+        window.__FORT_PYWORKER_STORAGE_DIAGNOSTIC__ = {
+            state: "done",
+            stage: "DONE",
+            diagnostic: diagnostic
+        };
+    } catch (error) {
+        fail("PROBE_ERROR", error && error.message ? error.message : String(error), error);
+    }
+})();
+</script>

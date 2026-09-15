@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Worker Probe — Missing Script</title>
+<script>
+// Negative-control fixture: attempts to load a nonexistent worker script.
+window.__workerProbeResult = { state: "loading" };
+
+try {
+    var worker = new Worker("nonexistent-worker.js");
+} catch (e) {
+    window.__workerProbeResult = {
+        state: "error",
+        category: "WORKER_CONSTRUCTOR_FAILURE",
+        message: String(e)
+    };
+}
+
+if (worker) {
+    worker.onmessage = function (e) {
+        window.__workerProbeResult = {
+            state: "error",
+            category: "WRONG_MESSAGE",
+            message: "missing script must not produce pong"
+        };
+    };
+    worker.onerror = function (e) {
+        window.__workerProbeResult = {
+            state: "error",
+            category: "WORKER_SCRIPT_LOAD_FAILURE",
+            message: e.message || "worker script load failed (expected)"
+        };
+    };
+    worker.postMessage("ping");
+}
+</script>

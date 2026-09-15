@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Persistence Write Probe</title>
+<script>
+window.__probeResult = { state: "loading", stage: "js_started", origin: self.location.origin };
+
+function fail(category, message) {
+    window.__probeResult = { state: "error", category: category, message: message, stage: window.__probeResult.stage };
+}
+
+function setStage(s) { window.__probeResult.stage = s; }
+
+try { setStage("indexeddb_available"); } catch(e) {}
+var indexedDBAvailable = typeof indexedDB !== "undefined";
+if (!indexedDBAvailable) { fail("INDEXEDDB_UNAVAILABLE", "indexedDB is undefined"); }
+
+var params = new URLSearchParams(location.search);
+var key = params.get("key");
+var value = params.get("value");
+
+if (!key || !value) {
+    fail("MISSING_PARAMS", "key and value must be supplied as URL query parameters");
+} else {
+    try {
+        setStage("idb_open_requested");
+        var request = indexedDB.open("fortoid-persistence-probe", 1);
+        request.onupgradeneeded = function(e) {
+            setStage("idb_upgrade");
+            e.target.result.createObjectStore("probe");
+        };
+        request.onsuccess = function(e) {
+            setStage("idb_open_success");
+            var db = e.target.result;
+            try {
+                setStage("idb_transaction_started");
+                var tx = db.transaction("probe", "readwrite");
+                var store = tx.objectStore("probe");
+                store.put(value, key);
+                tx.oncomplete = function() {
+                    setStage("idb_transaction_complete");
+                    setStage("idb_readback_started");
+                    var rtx = db.transaction("probe", "readonly");
+                    var rstore = rtx.objectStore("probe");
+                    var getReq = rstore.get(key);
+                    getReq.onsuccess = function() {
+                        setStage("idb_readback_success");
+                        if (getReq.result === value) {
+                            window.__probeResult = {
+                                state: "done", phase: "write", key: key,
+                                immediateReadback: "ok", origin: self.location.origin,
+                                isSecureContext: self.isSecureContext || false
+                            };
+                        } else { fail("IMMEDIATE_READBACK_FAILURE", "value mismatch"); }
+                    };
+                    getReq.onerror = function() { fail("INDEXEDDB_READ_FAILURE", getReq.error?.message); };
+                };
+                tx.onerror = function() { fail("INDEXEDDB_WRITE_FAILURE", tx.error?.message); };
+            } catch (e) { fail("INDEXEDDB_WRITE_FAILURE", e.message); }
+        };
+        request.onerror = function(e) { fail("INDEXEDDB_OPEN_FAILURE", e.target.error?.message); };
+        request.onblocked = function() { fail("INDEXEDDB_BLOCKED", "database open blocked"); };
+    } catch (e) { fail("PAGE_ERROR", e.message); }
+}
+</script>
