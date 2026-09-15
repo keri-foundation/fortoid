@@ -69,19 +69,19 @@ tasks.register("verifyPreparedPayload") {
 
         if (!payloadDir.exists()) {
             throw GradleException(
-                "Payload directory missing. Run: node tools/import-fortweb-runtime-package.mjs <fortweb-runtime.zip>"
+                "Payload directory missing. Run: ./sync-payload.sh --package <fortweb-runtime.zip>"
             )
         }
 
         if (!manifestFile.exists()) {
             throw GradleException(
-                "manifest.json missing. Run: node tools/import-fortweb-runtime-package.mjs <fortweb-runtime.zip>"
+                "manifest.json missing. Run: ./sync-payload.sh --package <fortweb-runtime.zip>"
             )
         }
 
         if (!entryHtml.exists() || !mainJs.exists() || !requirementsContract.exists()) {
             throw GradleException(
-                "FortWeb runtime incomplete. Run: node tools/import-fortweb-runtime-package.mjs <fortweb-runtime.zip>"
+                "FortWeb runtime incomplete. Run: ./sync-payload.sh --package <fortweb-runtime.zip>"
             )
         }
 

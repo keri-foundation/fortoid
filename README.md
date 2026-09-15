@@ -12,13 +12,14 @@ Fort Android is a hardened WebView shell that hosts the shared [FortWeb](https:/
 - JDK 17+
 - Android SDK 36 with build tools
 - Node.js 20+
-- A sibling [FortWeb](https://github.com/keri-foundation/fortweb) checkout
+- Python 3.12+ (used by the canonical FortWeb producer build)
+- Optional: a local [FortWeb](https://github.com/keri-foundation/fortweb) checkout, only for `--fortweb-dir`
 
 ## Quick Start
 
 ```bash
-# Sync the canonical FortWeb runtime into the Android payload
-./sync-payload.sh --fortweb-dir ../fortweb
+# Stage the canonical FortWeb runtime into the Android payload
+./sync-payload.sh --fetch --locked
 
 # Build and install on emulator
 ./gradlew :app:assembleDebug
@@ -26,22 +27,54 @@ Fort Android is a hardened WebView shell that hosts the shared [FortWeb](https:/
 
 ## Payload Synchronization
 
-Android consumes the canonical `FortWeb/dist/runtime` artifact.
+Android consumes one canonical FortWeb runtime package. The producer revision is
+never a parameter: `config/fortweb-runtime.json` is the sole authority, and every
+mode is bound to it.
 
-### Local mode
+### Package mode (primary)
+
+Stage an already-produced package. No checkout, no build, no network.
+
+```bash
+./sync-payload.sh --package /path/to/fortweb-runtime.zip
+```
+
+### Locked fetch mode
+
+Fetch the locked revision, build the canonical package, then stage it.
+
+```bash
+./sync-payload.sh --fetch --locked
+```
+
+### Locked local checkout mode
+
+Build from an existing checkout, which must already be at the locked revision.
 
 ```bash
 ./sync-payload.sh --fortweb-dir ../fortweb
 ```
 
-### Fetch mode
+### Inspect without running
+
+`--print-plan` prints the exact sequence, including the canonical producer's
+steps, without executing anything.
 
 ```bash
-./sync-payload.sh --fetch --ref main
-./sync-payload.sh --fetch --ref <commit-sha>
+./sync-payload.sh --fetch --locked --print-plan
 ```
 
-Fetch mode always requires `--ref`.
+### Lock authority
+
+- `config/fortweb-runtime.json` pins the producer repository and commit.
+- A local checkout must equal the locked commit, or the sync is refused.
+- The imported package manifest's `fortweb_commit_sha` must equal the lock, or the
+  import is refused before anything is staged.
+- Mutable refs are not supported. `--ref` is rejected.
+
+There is no published Fortoid runtime release yet, so a package currently comes
+from a canonical local build (`--fetch --locked` or `--fortweb-dir`) or from an
+appropriate CI artifact. Do not assume a downloadable release exists.
 
 ## Build
 
