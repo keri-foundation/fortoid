@@ -45,6 +45,12 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          # The action's default package list still includes the obsolete `tools`
+          # package, which no longer exists in the SDK repository, so `sdkmanager
+          # tools` fails the step. cmdline-tools are installed by the action
+          # itself; these workflows need only platform-tools (adb).
+          packages: platform-tools
 
       - name: Install system image and create AVD
         run: |
@@ -94,12 +100,15 @@ jobs:
       # unavailable), and a normal shell failure would prevent a later step
       # from executing. Do not use continue-on-error on the lifecycle step.
       - name: Run Pyodide storage context diagnostic
+        id: diagproof
         run: |
           ./gradlew :app:connectedDebugAndroidTest --no-daemon \
             -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.PyodideStorageContextDiagnosticTest
 
+      # Gate each JUnit verifier on its test step having actually run (see the
+      # SDK-provisioning note above).
       - name: Verify Pyodide storage context diagnostic JUnit XML
-        if: always()
+        if: always() && steps.diagproof.outcome != 'skipped'
         run: |
           python3 tools/verify-junit-suite.py \
             --results-dir app/build/outputs/androidTest-results/connected \
@@ -114,12 +123,13 @@ jobs:
           adb logcat -d -s PyodideStorageContextDiag:* 2>/dev/null | tail -120 || echo "(no diagnostic logcat)"
 
       - name: Run Pyodide worker lifecycle proof
+        id: lifecycleproof
         run: |
           ./gradlew :app:connectedDebugAndroidTest --no-daemon \
             -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.PyodideWorkerLifecycleProofTest
 
       - name: Verify Pyodide worker lifecycle JUnit XML
-        if: always()
+        if: always() && steps.lifecycleproof.outcome != 'skipped'
         run: |
           python3 tools/verify-junit-suite.py \
             --results-dir app/build/outputs/androidTest-results/connected \

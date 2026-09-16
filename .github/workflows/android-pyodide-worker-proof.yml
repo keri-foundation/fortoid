@@ -45,6 +45,12 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          # The action's default package list still includes the obsolete `tools`
+          # package, which no longer exists in the SDK repository, so `sdkmanager
+          # tools` fails the step. cmdline-tools are installed by the action
+          # itself; these workflows need only platform-tools (adb).
+          packages: platform-tools
 
       - name: Install system image and create AVD
         run: |
@@ -84,12 +90,15 @@ jobs:
           echo "SDK: $SDK — OK"
 
       - name: Run Pyodide worker proof
+        id: runproof
         run: |
           ./gradlew :app:connectedDebugAndroidTest --no-daemon \
             -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.PyodideWorkerRuntimeProofTest
 
+      # Gate the JUnit verifier on the test step having actually run (see the
+      # SDK-provisioning note above).
       - name: Verify Pyodide worker JUnit XML
-        if: always()
+        if: always() && steps.runproof.outcome != 'skipped'
         run: |
           python3 tools/verify-junit-suite.py \
             --results-dir app/build/outputs/androidTest-results/connected \
