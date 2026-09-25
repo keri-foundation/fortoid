@@ -121,7 +121,15 @@ EOF
   exit 0
 fi
 
-[[ -d "${FORTWEB_DIR}/.git" ]] || die "${FORTWEB_DIR} is not a Git checkout"
+# Recognise the working tree with Git itself rather than by the shape of `.git`.
+# A linked worktree stores `.git` as a file pointing at the common repository, so
+# a filesystem test rejects a valid checkout; conversely a directory that merely
+# contains `.git` is not a repository, and probing it directly would surface a raw
+# git error instead of the intended message. The result must be exactly `true`:
+# git exits 0 while printing `false` for a bare repository, so command success
+# alone is not sufficient.
+IS_WORK_TREE="$(git -C "${FORTWEB_DIR}" rev-parse --is-inside-work-tree 2>/dev/null || true)"
+[[ "${IS_WORK_TREE}" == "true" ]] || die "${FORTWEB_DIR} is not a Git checkout"
 
 ACTUAL_COMMIT="$(git -C "${FORTWEB_DIR}" rev-parse HEAD)"
 log "locked producer commit: ${LOCK_COMMIT}"

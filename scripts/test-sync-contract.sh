@@ -207,6 +207,35 @@ git -C "${WRONG_REV}" -c user.email=contract@test -c user.name=contract commit -
 expect_fail_msg "a checkout at the wrong revision fails" "not at the locked revision" \
   "${SYNC_SCRIPT}" --fortweb-dir "${WRONG_REV}"
 
+# A linked worktree stores `.git` as a FILE pointing at the common repository, so
+# a filesystem shape test rejects a perfectly valid working tree. Recognition must
+# come from Git, and execution must reach the exact-revision gate below.
+WORKTREE_ROOT="$(new_tmp)"
+git -C "${WORKTREE_ROOT}" init -q repo
+git -C "${WORKTREE_ROOT}/repo" -c user.email=contract@test -c user.name=contract \
+  commit -q --allow-empty -m fixture
+git -C "${WORKTREE_ROOT}/repo" worktree add -q --detach "${WORKTREE_ROOT}/linked"
+if [[ -f "${WORKTREE_ROOT}/linked/.git" ]]; then
+  ok "linked worktree fixture stores .git as a file"
+else
+  bad "linked worktree fixture did not produce a .git file"
+fi
+expect_fail_msg "a linked worktree reaches the revision gate" "not at the locked revision" \
+  "${SYNC_SCRIPT}" --fortweb-dir "${WORKTREE_ROOT}/linked"
+
+# A directory that merely contains a `.git` entry is not a Git checkout. This is
+# what separates a Git-native predicate from `[[ -e .git ]]`.
+FAKE_GIT="$(new_tmp)"
+mkdir -p "${FAKE_GIT}/.git"
+expect_fail_msg "a fake .git directory is not a Git checkout" "is not a Git checkout" \
+  "${SYNC_SCRIPT}" --fortweb-dir "${FAKE_GIT}"
+
+# A bare repository is not a working tree, and git reports exit 0 for it.
+BARE_REPO="$(new_tmp)"
+git init -q --bare "${BARE_REPO}"
+expect_fail_msg "a bare repository is not a working tree" "is not a Git checkout" \
+  "${SYNC_SCRIPT}" --fortweb-dir "${BARE_REPO}"
+
 # ── Valid modes resolve to a plan ─────────────────────────────────────────────
 
 expect_ok "package mode resolves to a plan" \
