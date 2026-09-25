@@ -28,6 +28,8 @@ import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { parseChecksums, verifyPayload } from './verify-packaged-runtime.mjs';
+import { validateStagedPayload } from './validate-staged-payload.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -195,21 +197,18 @@ export async function validateChecksums(checksumsPath, extractedDir, manifest) {
   try { manifestDigest = await sha256File(manifestPath); }
   catch (e) { return [`checksums.sha256: cannot hash manifest: ${e.message}`]; }
 
-  let raw;
-  try { raw = await readFile(checksumsPath, 'utf-8'); }
+  let rawBytes;
+  try { rawBytes = await readFile(checksumsPath); }
   catch (e) { return [`checksums.sha256: cannot read: ${e.message}`]; }
 
-  const trimmed = raw.trim();
-  if (!trimmed) return ['checksums.sha256: empty'];
-
-  const parts = trimmed.split(/\s+/, 2);
-  if (parts.length !== 2) return [`checksums.sha256: malformed: "${trimmed.slice(0, 80)}"`];
-  const [digest, pathName] = parts;
-  if (pathName !== MANIFEST_FILENAME) {
-    errors.push(`checksums.sha256: expected path "${MANIFEST_FILENAME}", got "${pathName}"`);
-  }
-  if (digest !== manifestDigest) {
-    errors.push(`checksums.sha256: manifest digest mismatch: expected ${digest}, actual ${manifestDigest}`);
+  // Grammar is owned by the packaged-runtime verifier so the importer's early
+  // check and the authoritative acceptance gate cannot disagree about what a
+  // valid checksum file is. A bounded whitespace split silently ignored
+  // trailing content and admitted a package the acceptance gate then rejected.
+  const parsed = parseChecksums(rawBytes);
+  if (parsed.errors.length) return parsed.errors;
+  if (parsed.digest !== manifestDigest) {
+    errors.push(`checksums.sha256: manifest digest mismatch: expected ${parsed.digest}, actual ${manifestDigest}`);
   }
 
   // 2. Verify every file in manifest.files against actual extracted bytes
@@ -271,6 +270,13 @@ export async function activatePayload(extractedDir, destDir, packageName, opts =
   const pkgDir = path.join(extractedDir, packageName);
   const sourceDir = existsSync(pkgDir) ? pkgDir : extractedDir;
 
+  // Transaction state. `hadExistingPayload` separates a replacement from a
+  // first install, and `activated` separates a failure before the candidate was
+  // moved into place (the original destination is still untouched) from a
+  // failure after it (the candidate must be removed).
+  const hadExistingPayload = existsSync(destDir);
+  let activated = false;
+
   try {
     // Copy to candidate
     await mkdir(candidateDir, { recursive: true });
@@ -291,8 +297,11 @@ export async function activatePayload(extractedDir, destDir, packageName, opts =
     if (opts.beforeActivate) await opts.beforeActivate();
 
     await rename(candidateDir, destDir);
+    activated = true;
 
-    // Allow tests to inject failure after activation (triggers rollback)
+    // Acceptance-validation seam. Runs against the activated destination while
+    // the previous payload is still recoverable, so an error here enters the
+    // rollback path below rather than leaving a rejected payload committed.
     if (opts.afterActivate) await opts.afterActivate();
 
     // Remove backup
@@ -310,6 +319,11 @@ export async function activatePayload(extractedDir, destDir, packageName, opts =
       if (existsSync(backupDir)) {
         if (existsSync(destDir)) await rm(destDir, { recursive: true, force: true });
         await rename(backupDir, destDir);
+      } else if (activated && !hadExistingPayload && existsSync(destDir)) {
+        // First install: there is no previous payload to restore, so the prior
+        // state is absence. Keeping the rejected payload would leave the build
+        // packaging a payload that failed its own acceptance validation.
+        await rm(destDir, { recursive: true, force: true });
       }
     } catch (rollbackErr) {
       rollbackFailed = true;
@@ -397,7 +411,21 @@ export async function importPackage(zipPath, destDir = PAYLOAD_DEST, opts = {}) 
     }
     if (invErrs.length) throw new ImportError(`inventory closure:\n  - ${invErrs.join('\n  - ')}`);
 
-    return await activatePayload(pkgRoot, destDir, EXPECTED_PACKAGE_NAME);
+    return await activatePayload(pkgRoot, destDir, EXPECTED_PACKAGE_NAME, {
+      // Acceptance validation is owned by the transaction, so a rejected package
+      // can never survive as the active payload. Both authorities run against
+      // the activated destination before the previous payload backup is removed.
+      afterActivate: async () => {
+        const stagedErrors = validateStagedPayload(destDir);
+        if (stagedErrors.length) {
+          throw new ImportError(`staged payload:\n  - ${stagedErrors.join('\n  - ')}`);
+        }
+        const runtimeErrors = await verifyPayload(destDir, { apkPrefix: '' });
+        if (runtimeErrors.length) {
+          throw new ImportError(`packaged runtime:\n  - ${runtimeErrors.join('\n  - ')}`);
+        }
+      },
+    });
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }

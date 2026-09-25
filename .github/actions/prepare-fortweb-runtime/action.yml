@@ -83,12 +83,9 @@ runs:
 
     - name: Import runtime package
       shell: bash
-      run: node tools/import-fortweb-runtime-package.mjs --expected-fortweb-commit "${{ steps.lock.outputs.commit }}" "${{ steps.package.outputs.path }}"
-
-    - name: Validate staged payload
-      shell: bash
-      run: node tools/validate-staged-payload.mjs
-
-    - name: Verify staged payload bytes
-      shell: bash
-      run: node tools/verify-packaged-runtime.mjs app/src/main/assets/payload
+      run: |
+        # The importer owns acceptance validation: it runs the staged-payload
+        # contract and the packaged-runtime byte verification against the
+        # activated payload inside its own rollback transaction, so a rejected
+        # package can neither replace the previous payload nor be left active.
+        node tools/import-fortweb-runtime-package.mjs --expected-fortweb-commit "${{ steps.lock.outputs.commit }}" "${{ steps.package.outputs.path }}"

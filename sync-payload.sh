@@ -163,18 +163,19 @@ make_temp() {
 
 print_import_plan() {
   echo "PLAN import=cwd=${REPO_ROOT} cmd=node tools/import-fortweb-runtime-package.mjs --expected-fortweb-commit ${LOCK_COMMIT} $1"
-  echo "PLAN validate_staged=cwd=${REPO_ROOT} cmd=node tools/validate-staged-payload.mjs"
-  echo "PLAN verify_packaged=cwd=${REPO_ROOT} cmd=node tools/verify-packaged-runtime.mjs ${PAYLOAD_REL}"
+  echo "PLAN import_acceptance=cwd=${REPO_ROOT} cmd=node tools/validate-staged-payload.mjs and node tools/verify-packaged-runtime.mjs ${PAYLOAD_REL} run by the importer inside its rollback transaction"
 }
 
 import_and_verify() {
   local zip="$1"
   echo "[sync-payload] importing package for locked commit ${LOCK_COMMIT}"
+  # The importer runs both acceptance validators against the activated payload
+  # inside its own rollback transaction. A rejected package therefore cannot
+  # replace the previous payload, and cannot be left active after a failure.
+  echo "[sync-payload] import performs transactional acceptance validation:"
+  echo "[sync-payload]   staged payload contract: tools/validate-staged-payload.mjs"
+  echo "[sync-payload]   packaged runtime bytes: tools/verify-packaged-runtime.mjs"
   node "${IMPORTER}" --expected-fortweb-commit "${LOCK_COMMIT}" "${zip}"
-  echo "[sync-payload] validating staged payload"
-  (cd "${REPO_ROOT}" && node tools/validate-staged-payload.mjs)
-  echo "[sync-payload] verifying staged payload bytes"
-  (cd "${REPO_ROOT}" && node tools/verify-packaged-runtime.mjs "${PAYLOAD_REL}")
 }
 
 # The canonical producer sequence lives in

@@ -22,6 +22,7 @@ import {
   activatePayload,
   importPackage,
 } from './import-fortweb-runtime-package.mjs';
+import { verifyPayload } from './verify-packaged-runtime.mjs';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -89,25 +90,45 @@ async function makeZip(dir, files) {
   return zipPath;
 }
 
-async function makeCanonicalZip(dir) {
-  const rr = makeRR();
-  const rrContent = JSON.stringify(rr);
+async function makeCanonicalZip(dir, { checksumsFor, extraPayload, unlistedPayload } = {}) {
+  const rrContent = JSON.stringify(makeRR());
   const idxContent = `idx-${testSeq}`;
+  // The staged-payload gate requires these entries, so the canonical fixture
+  // carries them: a package that omits them is not an acceptable package.
+  const payload = {
+    'app/index.html': idxContent,
+    'app/app/main.js': `main-${testSeq}`,
+    'pyscript-ci.toml': '[fort_runtime_packages]\n',
+    'contracts/runtime-requirements.json': rrContent,
+    'vendor/pyodide/pyodide.mjs': `pyodide-${testSeq}`,
+    'vendor/pyscript/pyscript.js': `pyscript-${testSeq}`,
+    'wheels/.keep': `wheel-${testSeq}`,
+    ...(extraPayload || {}),
+  };
   const manifestContent = JSON.stringify({
     ...makeManifest(),
-    files: [
-      { path: 'app/index.html', sha256: sha256(Buffer.from(idxContent)), bytes: Buffer.byteLength(idxContent) },
-      { path: 'contracts/runtime-requirements.json', sha256: sha256(Buffer.from(rrContent)), bytes: Buffer.byteLength(rrContent) },
-    ],
+    files: Object.entries(payload).map(([rel, content]) => ({
+      path: rel,
+      sha256: sha256(Buffer.from(content)),
+      bytes: Buffer.byteLength(content),
+    })),
   });
   // FortWeb checksums.sha256 contains only the manifest's own digest
   const manifestDigest = sha256(Buffer.from(manifestContent));
   const files = {
     'fortweb-runtime/manifest.json': manifestContent,
-    'fortweb-runtime/checksums.sha256': `${manifestDigest}  manifest.json\n`,
-    'fortweb-runtime/app/index.html': idxContent,
-    'fortweb-runtime/contracts/runtime-requirements.json': rrContent,
+    'fortweb-runtime/checksums.sha256': checksumsFor
+      ? checksumsFor(manifestDigest)
+      : `${manifestDigest}  manifest.json\n`,
   };
+  for (const [rel, content] of Object.entries(payload)) {
+    files[`fortweb-runtime/${rel}`] = content;
+  }
+  // Files present in the archive but deliberately absent from manifest.files,
+  // for exercising the inventory-closure rejection.
+  for (const [rel, content] of Object.entries(unlistedPayload || {})) {
+    files[`fortweb-runtime/${rel}`] = content;
+  }
   const manifest = JSON.parse(manifestContent);
   return { zipPath: await makeZip(dir, files), manifest, dir };
 }
@@ -533,22 +554,13 @@ describe('importPackage (integration)', () => {
   });
 
   it('rejects unlisted file not in manifest inventory', async () => {
-    const zipDir = nextDir('extra-file');
-    const { manifest } = await makeCanonicalZip(nextDir('extra-base'));
-    // Add an extra file not in the manifest
-    const manifestContent = JSON.stringify(manifest);
-    const rrContent = JSON.stringify(makeRR());
-    const idxContent = `idx-${testSeq}`;
-    const extraFiles = {
-      'fortweb-runtime/manifest.json': manifestContent,
-      'fortweb-runtime/checksums.sha256': `${sha256(Buffer.from(manifestContent))}  manifest.json\n`,
-      'fortweb-runtime/app/index.html': idxContent,
-      'fortweb-runtime/contracts/runtime-requirements.json': rrContent,
-      'fortweb-runtime/secret.txt': 'not-in-manifest',
-    };
-    await makeZip(zipDir, extraFiles);
+    // A canonical package plus one file that manifest.files does not list, so
+    // every manifest-listed file resolves and only the closure check can fire.
+    const { zipPath } = await makeCanonicalZip(nextDir('extra-file'), {
+      unlistedPayload: { 'secret.txt': 'not-in-manifest' },
+    });
     await assert.rejects(
-      () => importPackage(path.join(zipDir, 'package.zip'), path.join(nextDir('extra-dest'), 'payload')),
+      () => importPackage(zipPath, path.join(nextDir('extra-dest'), 'payload')),
       /inventory closure/,
     );
   });
@@ -737,5 +749,128 @@ describe('importPackage lock enforcement', () => {
     assert.ok(caught, 'the CLI must fail when the lock commit is not supplied');
     assert.strictEqual(caught.status, 2);
     assert.match(String(caught.stderr), /--expected-fortweb-commit/);
+  });
+});
+
+// ── Payload activation atomicity (PR #24 review) ─────────────────────────────
+//
+// The previous known-good payload must remain recoverable until every
+// validation required for acceptance of the new payload has succeeded.
+
+describe('payload activation atomicity', () => {
+  it("rejects the reviewer's extra-checksum-line package before it replaces the payload", async () => {
+    const workDir = nextDir('atomicity-extra-checksum');
+    const destDir = path.join(workDir, 'payload');
+
+    // Establish a known-good active payload through the production importer.
+    const good = await makeCanonicalZip(nextDir('atomicity-extra-checksum-good'));
+    await importPackage(good.zipPath, destDir);
+    const goodHash = sha256(await readFile(path.join(destDir, 'app/index.html')));
+
+    // The candidate is canonical apart from one prohibited extra checksum line.
+    const badZip = (
+      await makeCanonicalZip(nextDir('atomicity-extra-checksum-bad'), {
+        checksumsFor: (digest) => `${digest}  manifest.json\n${'b'.repeat(64)}  app/index.html\n`,
+      })
+    ).zipPath;
+
+    // The authoritative payload verifier rejects this package, so accepting it
+    // would hand the environment a payload that cannot pass its own gate.
+    const extractDir = path.join(workDir, 'extracted');
+    await mkdir(extractDir, { recursive: true });
+    execFileSync('unzip', ['-q', badZip, '-d', extractDir], { timeout: 10000 });
+    const verifierErrors = await verifyPayload(path.join(extractDir, 'fortweb-runtime'), { apkPrefix: '' });
+    assert.ok(
+      verifierErrors.some((e) => e.includes('checksums.sha256')),
+      `expected the payload verifier to reject the extra checksum line, got: ${JSON.stringify(verifierErrors)}`,
+    );
+
+    // The production import path must reject it and leave the prior payload intact.
+    await assert.rejects(
+      () => importPackage(badZip, destDir),
+      /checksums/,
+      'a package with extra checksum content must be rejected by the importer',
+    );
+    assert.strictEqual(
+      sha256(await readFile(path.join(destDir, 'app/index.html'))),
+      goodHash,
+      'the previous payload must be preserved byte-for-byte',
+    );
+    const parentEntries = await readdir(path.dirname(destDir));
+    assert.ok(!parentEntries.some((e) => e.startsWith('.payload-candidate')), 'no candidate residue');
+    assert.ok(!parentEntries.some((e) => e.startsWith('.payload-backup')), 'no backup residue');
+  });
+
+  it('rolls back when transactional acceptance validation rejects the activated payload', async () => {
+    const workDir = nextDir('atomicity-post-activation');
+    const destDir = path.join(workDir, 'payload');
+
+    const good = await makeCanonicalZip(nextDir('atomicity-post-activation-good'));
+    await importPackage(good.zipPath, destDir);
+    const goodHash = sha256(await readFile(path.join(destDir, 'app/index.html')));
+
+    // Package-level validation accepts this package; only the staged-payload
+    // gate rejects it, because raw TypeScript must never ship in the payload.
+    // This therefore exercises the real acceptance-validation seam rather than
+    // an injected fault.
+    const bad = await makeCanonicalZip(nextDir('atomicity-post-activation-bad'), {
+      extraPayload: { 'app/raw.ts': 'export const unsupported = 1;\n' },
+    });
+
+    await assert.rejects(
+      () => importPackage(bad.zipPath, destDir),
+      /raw TypeScript/,
+      'the staged-payload gate must reject the activated candidate',
+    );
+
+    assert.strictEqual(
+      sha256(await readFile(path.join(destDir, 'app/index.html'))),
+      goodHash,
+      'the previous payload must be restored byte-for-byte',
+    );
+    const parentEntries = await readdir(path.dirname(destDir));
+    assert.ok(!parentEntries.some((e) => e.startsWith('.payload-candidate')), 'no candidate residue');
+    assert.ok(!parentEntries.some((e) => e.startsWith('.payload-backup')), 'backup consumed by rollback');
+  });
+
+  it('leaves no payload behind when a first install fails acceptance validation', async () => {
+    const workDir = nextDir('atomicity-first-install');
+    await mkdir(workDir, { recursive: true });
+    const destDir = path.join(workDir, 'payload');
+
+    const bad = await makeCanonicalZip(nextDir('atomicity-first-install-bad'), {
+      extraPayload: { 'app/raw.ts': 'export const unsupported = 1;\n' },
+    });
+
+    await assert.rejects(() => importPackage(bad.zipPath, destDir), /raw TypeScript/);
+
+    assert.ok(!existsSync(destDir), 'a rejected first install must leave no active payload');
+    const entries = await readdir(workDir);
+    assert.ok(!entries.some((e) => e.startsWith('.payload-candidate')), 'no candidate residue');
+    assert.ok(!entries.some((e) => e.startsWith('.payload-backup')), 'no backup residue');
+  });
+
+  it('commits the replacement and consumes the backup only after acceptance validation', async () => {
+    const workDir = nextDir('atomicity-success');
+    const destDir = path.join(workDir, 'payload');
+
+    const first = await makeCanonicalZip(nextDir('atomicity-success-first'));
+    await importPackage(first.zipPath, destDir);
+    const firstHash = sha256(await readFile(path.join(destDir, 'app/index.html')));
+
+    const second = await makeCanonicalZip(nextDir('atomicity-success-second'));
+    const result = await importPackage(second.zipPath, destDir);
+
+    assert.ok(result.includes('staged'), `expected a staged result, got: ${result}`);
+    assert.ok(existsSync(path.join(destDir, 'manifest.json')), 'new payload must be active');
+    assert.ok(existsSync(path.join(destDir, 'app/app/main.js')), 'new payload entries must be present');
+    assert.notStrictEqual(
+      sha256(await readFile(path.join(destDir, 'app/index.html'))),
+      firstHash,
+      'the replacement payload must actually be the new bytes',
+    );
+    const parentEntries = await readdir(path.dirname(destDir));
+    assert.ok(!parentEntries.some((e) => e.startsWith('.payload-backup')), 'backup removed after validation');
+    assert.ok(!parentEntries.some((e) => e.startsWith('.payload-candidate')), 'candidate removed');
   });
 });

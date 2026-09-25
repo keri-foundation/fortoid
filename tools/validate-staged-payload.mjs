@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
-const PAYLOAD_DIR = path.join(REPO_ROOT, 'app/src/main/assets/payload');
+const PAYLOAD_DIR_DEFAULT = path.join(REPO_ROOT, 'app/src/main/assets/payload');
 
 const REQUIRED_FILES = [
   'manifest.json',
@@ -52,13 +52,22 @@ function walkDir(dir, base = dir) {
   return results.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function main() {
+/**
+ * Validate a payload directory against the canonical FortWeb staged contract.
+ *
+ * This is a pure predicate: it returns the list of validation errors and never
+ * exits the process, so the payload transaction can run it against the activated
+ * destination while rollback is still possible.
+ *
+ * @param {string} PAYLOAD_DIR directory to validate
+ * @returns {string[]} errors, empty when the payload is acceptable
+ */
+export function validateStagedPayload(PAYLOAD_DIR) {
   const errors = [];
 
   // Check payload directory exists
   if (!existsSync(PAYLOAD_DIR)) {
-    console.error('FAIL: payload directory missing');
-    process.exit(1);
+    return [`payload directory missing: ${PAYLOAD_DIR}`];
   }
 
   // Check required files
@@ -134,6 +143,12 @@ function main() {
     }
   }
 
+  return errors;
+}
+
+function main() {
+  const errors = validateStagedPayload(PAYLOAD_DIR_DEFAULT);
+
   if (errors.length > 0) {
     console.error('FAIL: staged payload validation errors:');
     for (const err of errors) {
@@ -146,4 +161,8 @@ function main() {
   process.exit(0);
 }
 
-main();
+// Only run the CLI when invoked directly, so the predicate above can be
+// imported by the payload transaction without exiting the host process.
+if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*[\\/]/, ''))) {
+  main();
+}
