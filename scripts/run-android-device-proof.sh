@@ -17,6 +17,44 @@ if [[ -n "$SERIAL" ]]; then
   ADB="adb -s $SERIAL"
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/instrumentation-result.sh
+source "${SCRIPT_DIR}/instrumentation-result.sh"
+
+# Run one instrumentation proof and require a positive result.
+#
+# `adb` reports its own process status, which stays 0 even when
+# AndroidJUnitRunner reports failing tests, so the exit status alone cannot gate
+# the proof. The runner output is echoed for diagnostics and then inspected by
+# verify_instrumentation_result, which demands a terminal success summary for
+# exactly `expected` tests. Any other outcome aborts the run, so a failed proof
+# can never reach the force-stop or the completion banner.
+#
+# Arguments: <label> <expected-test-count> <adb instrumentation args...>
+run_instrumentation_proof() {
+  local label="$1"
+  local expected="$2"
+  shift 2
+
+  local output_file
+  output_file="$(mktemp "${TMPDIR:-/tmp}/fortoid-instrumentation.XXXXXX")"
+
+  local status=0
+  set +e
+  $ADB shell am instrument -w -r "$@" 2>&1 | tee "$output_file"
+  status="${PIPESTATUS[0]}"
+  set -e
+
+  if ! verify_instrumentation_result "$expected" "$status" "$output_file"; then
+    rm -f "$output_file"
+    echo "" >&2
+    echo "FAIL: ${label} instrumentation proof did not succeed" >&2
+    exit 1
+  fi
+
+  rm -f "$output_file"
+}
+
 echo "=== Device Identity ==="
 MODEL=$($ADB shell getprop ro.product.model)
 DEVICE=$($ADB shell getprop ro.product.device)
@@ -61,7 +99,7 @@ $ADB install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.ap
 
 echo ""
 echo "=== Worker Proof ==="
-$ADB shell am instrument -w -r \
+run_instrumentation_proof "Worker Proof" 2 \
   -e class org.kerifoundation.fortandroid.WorkerRuntimeProofTest \
   org.kerifoundation.fortandroid.test/androidx.test.runner.AndroidJUnitRunner
 
@@ -72,7 +110,7 @@ VALUE="val-$(uuidgen 2>/dev/null || echo "val-$RANDOM")"
 echo "Key: $KEY  Value: $VALUE"
 
 echo "--- Phase A: Write ---"
-$ADB shell am instrument -w -r \
+run_instrumentation_proof "Persistence Write" 1 \
   -e persistenceKey "$KEY" \
   -e persistenceValue "$VALUE" \
   -e class org.kerifoundation.fortandroid.PersistenceWriteTest \
@@ -83,7 +121,7 @@ $ADB shell am force-stop org.kerifoundation.fortandroid
 sleep 2
 
 echo "--- Phase B: Read ---"
-$ADB shell am instrument -w -r \
+run_instrumentation_proof "Persistence Read" 1 \
   -e persistenceKey "$KEY" \
   -e persistenceValue "$VALUE" \
   -e class org.kerifoundation.fortandroid.PersistenceReadTest \
