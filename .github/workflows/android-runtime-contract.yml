@@ -1,0 +1,110 @@
+name: Android Runtime Contract
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: android-contract-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  contract-tests:
+    name: Android runtime contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out Fortoid
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate runtime platform config
+        run: node tools/validate-runtime-platform-config.mjs
+
+      - name: Run platform-config tests
+        run: node --test tools/validate-runtime-platform-config.test.mjs
+
+      - name: Run importer tests
+        run: node --test tools/import-fortweb-runtime-package.test.mjs
+
+      - name: Run packaged-runtime verifier tests
+        run: npm run test:verify-packaged-runtime
+
+      - name: Run runtime-requirements compatibility tests
+        run: npm run test:runtime-requirements-compatibility
+
+  package-apk-integrity:
+    name: Android package and APK integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out Fortoid
+        uses: actions/checkout@v4
+
+      - name: Prepare canonical FortWeb runtime
+        uses: ./.github/actions/prepare-fortweb-runtime
+
+      - name: Validate exact locked FortWeb requirements compatibility
+        run: node tools/validate-runtime-requirements-compatibility.mjs
+
+      - name: Reject stale artifacts
+        shell: bash
+        run: |
+          for stale in "android-payload-manifest.json" "fortweb/app/runtime-origin-contract.json"; do
+            if [ -f "app/src/main/assets/payload/$stale" ]; then
+              echo "FAIL: stale artifact present: $stale"
+              exit 1
+            fi
+          done
+          echo "No stale Android-generated artifacts present"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Verify APK payload (exact inventory, digests, bytes)
+        shell: bash
+        run: |
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
+          if [ -z "$APK" ]; then echo "FAIL: no APK found"; exit 1; fi
+          echo "APK: $APK"
+          node tools/verify-packaged-runtime.mjs --apk "$APK"
+
+      - name: Assemble release APK and AAB
+        run: ./gradlew :app:assembleRelease :app:bundleRelease --no-daemon
+
+      - name: Verify release APK payload (exact inventory, digests, bytes)
+        shell: bash
+        run: |
+          APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          if [ ! -f "$APK" ]; then echo "FAIL: release APK not found at $APK"; exit 1; fi
+          echo "release APK: $APK"
+          node tools/verify-packaged-runtime.mjs --apk "$APK"
+
+      - name: Verify release AAB payload (exact inventory, digests, bytes)
+        shell: bash
+        run: |
+          AAB=app/build/outputs/bundle/release/app-release.aab
+          if [ ! -f "$AAB" ]; then echo "FAIL: release AAB not found at $AAB"; exit 1; fi
+          echo "release AAB: $AAB"
+          node tools/verify-packaged-runtime.mjs --aab "$AAB"

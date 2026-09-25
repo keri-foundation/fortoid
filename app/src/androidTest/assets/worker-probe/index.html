@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Worker Probe</title>
+<script>
+// Test-only worker probe: constructs a same-origin dedicated Worker,
+// sends a ping, captures the reply, and exposes results via
+// a pollable window.__workerProbeResult object.
+
+window.__workerProbeResult = { state: "loading" };
+
+try {
+    var worker = new Worker("worker.js");
+} catch (e) {
+    window.__workerProbeResult = {
+        state: "error",
+        category: "WORKER_CONSTRUCTOR_FAILURE",
+        message: String(e)
+    };
+}
+
+if (worker) {
+    worker.onmessage = function (e) {
+        window.__workerProbeResult = {
+            state: "done",
+            reply: e.data
+        };
+    };
+    worker.onerror = function (e) {
+        window.__workerProbeResult = {
+            state: "error",
+            category: "WORKER_SCRIPT_LOAD_FAILURE",
+            message: e.message || "worker error"
+        };
+    };
+    worker.postMessage("ping");
+    // Timeout: if worker doesn't respond in 10s, report timeout
+    setTimeout(function () {
+        if (window.__workerProbeResult.state === "loading") {
+            window.__workerProbeResult = {
+                state: "error",
+                category: "TIMEOUT",
+                message: "worker did not respond within 10s"
+            };
+        }
+    }, 10000);
+}
+</script>
