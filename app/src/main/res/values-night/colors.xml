@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Night-mode overrides for the semantic native surfaces declared in
+         values/colors.xml. Repeating the same semantic names here means the
+         configuration qualifier alone selects the native surface, so native
+         layouts and Kotlin never need to branch on uiMode. -->
+    <color name="keri_window_surface">@color/keri_window_dark</color>
+    <color name="keri_on_window_surface">@color/keri_cream</color>
+</resources>

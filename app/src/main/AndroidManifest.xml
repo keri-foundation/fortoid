@@ -2,17 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Required for HTTPS wallet-service data transport (KF boot, witnesses,
+         watchers, account operations, and OOBIs) under the v2 runtime
+         requirements contract. Cleartext transport stays prohibited. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.FortAndroid"
+        android:theme="@style/Theme.KeriWallet"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="stateHidden|adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

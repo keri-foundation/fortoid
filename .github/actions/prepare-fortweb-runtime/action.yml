@@ -1,0 +1,91 @@
+name: Prepare canonical FortWeb runtime
+description: |
+  Checks out the exact locked FortWeb producer revision, builds the canonical
+  runtime package, and imports/validates/verifies it into
+  app/src/main/assets/payload so the caller's subsequent steps (Gradle,
+  emulator, etc.) can consume it in the same job.
+
+  The authoritative producer revision lives in config/fortweb-runtime.json.
+  This action is orchestration only. Lock parsing lives in
+  tools/read-fortweb-runtime-lock.mjs and the producer build/package sequence
+  lives in scripts/build-canonical-fortweb-package.sh -- the same script
+  developer recovery uses -- so CI and developers cannot drift apart.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Read and validate FortWeb runtime lock
+      id: lock
+      shell: bash
+      run: |
+        set -euo pipefail
+        # tools/read-fortweb-runtime-lock.mjs is the single lock implementation,
+        # shared with the developer recovery path.
+        OUT="$(node tools/read-fortweb-runtime-lock.mjs)" || {
+          echo "::error::FortWeb runtime lock is invalid: config/fortweb-runtime.json"
+          exit 1
+        }
+        REPO="$(printf '%s\n' "$OUT" | sed -n 's/^LOCK_REPOSITORY=//p')"
+        COMMIT="$(printf '%s\n' "$OUT" | sed -n 's/^LOCK_COMMIT=//p')"
+        if [ -z "$REPO" ] || [ -z "$COMMIT" ]; then
+          echo "::error::lock reader did not return repository and commit"
+          exit 1
+        fi
+
+        echo "repository=$REPO" >> "$GITHUB_OUTPUT"
+        echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+        echo "Lock loaded: $REPO @ $COMMIT"
+
+    - name: Check out FortWeb producer
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ steps.lock.outputs.repository }}
+        ref: ${{ steps.lock.outputs.commit }}
+        path: .deps/fortweb
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Build canonical FortWeb runtime package
+      id: package
+      shell: bash
+      run: |
+        set -euo pipefail
+        OUTPUT_DIR="${RUNNER_TEMP}/fortweb-runtime-package"
+        rm -rf "$OUTPUT_DIR"
+        LOG="${RUNNER_TEMP}/fortweb-package.log"
+        # The producer build/package sequence lives in exactly one place; this
+        # step only invokes it, so CI and developer recovery cannot drift apart.
+        # The script verifies the checkout revision itself and fails on mismatch.
+        bash scripts/build-canonical-fortweb-package.sh \
+          --fortweb-dir .deps/fortweb \
+          --output-dir "$OUTPUT_DIR" 2>&1 | tee "$LOG"
+
+        COUNT="$(grep -c '^PACKAGE_PATH=' "$LOG" || true)"
+        if [ "$COUNT" -ne 1 ]; then
+          echo "::error::expected exactly one PACKAGE_PATH line, found $COUNT"
+          exit 1
+        fi
+        PACKAGE_PATH="$(sed -n 's/^PACKAGE_PATH=//p' "$LOG")"
+        if [ ! -f "$PACKAGE_PATH" ]; then
+          echo "::error::producer reported a missing package: $PACKAGE_PATH"
+          exit 1
+        fi
+        echo "path=$PACKAGE_PATH" >> "$GITHUB_OUTPUT"
+        echo "Canonical package: $PACKAGE_PATH"
+
+    - name: Import runtime package
+      shell: bash
+      run: |
+        # The importer owns acceptance validation: it runs the staged-payload
+        # contract and the packaged-runtime byte verification against the
+        # activated payload inside its own rollback transaction, so a rejected
+        # package can neither replace the previous payload nor be left active.
+        node tools/import-fortweb-runtime-package.mjs --expected-fortweb-commit "${{ steps.lock.outputs.commit }}" "${{ steps.package.outputs.path }}"

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>KERI Wallet Payload Missing</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "SF Pro Text", "Segoe UI", sans-serif;
+      --page-bg: #f7f8f4;
+      --page-bg-end: #eef2e8;
+      --page-fg: #172317;
+      --card-bg: rgba(255, 255, 255, 0.88);
+      --card-shadow: 0 18px 60px rgba(23, 35, 23, 0.08);
+      --code-bg: #172317;
+      --code-fg: #f7f8f4;
+      background: var(--page-bg);
+      color: var(--page-fg);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page-bg: #101510;
+        --page-bg-end: #0a0d0a;
+        --page-fg: #e8efe6;
+        --card-bg: rgba(24, 32, 24, 0.88);
+        --card-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+        --code-bg: #050805;
+        --code-fg: #d8e6d4;
+      }
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: linear-gradient(180deg, var(--page-bg) 0%, var(--page-bg-end) 100%);
+    }
+
+    main {
+      width: min(680px, 100%);
+      padding: 24px;
+      border-radius: 24px;
+      background: var(--card-bg);
+      box-shadow: var(--card-shadow);
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 28px;
+      line-height: 1.1;
+    }
+
+    p {
+      margin: 0 0 14px;
+      line-height: 1.5;
+    }
+
+    pre {
+      overflow-x: auto;
+      padding: 14px;
+      border-radius: 16px;
+      background: var(--code-bg);
+      color: var(--code-fg);
+      font-size: 14px;
+    }
+
+    code {
+      font-family: "SF Mono", "Cascadia Code", monospace;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>FortWeb payload has not been generated yet.</h1>
+    <p>This Android wrapper no longer commits the full shared web payload into git.</p>
+    <p>Before running the app, stage the canonical runtime payload with one of these commands:</p>
+    <pre><code>./sync-payload.sh --package /path/to/fortweb-runtime.zip
+./sync-payload.sh --fetch --locked
+./sync-payload.sh --fortweb-dir ../fortweb</code></pre>
+    <p>The producer revision comes from <code>config/fortweb-runtime.json</code>. A local checkout must already be at that locked revision, and the package manifest must match it, or the sync is refused.</p>
+    <p>The generated output is written to <code>app/src/main/assets/payload/</code> and stays local.</p>
+  </main>
+</body>
+</html>
