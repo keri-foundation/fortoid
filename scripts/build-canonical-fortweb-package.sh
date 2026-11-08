@@ -34,9 +34,9 @@ LOCK_FILE="${REPO_ROOT}/config/fortweb-runtime.json"
 
 # Reviewed runtime-source pin. These values are the reviewed contract and must not
 # be changed here; they must agree with the FortWeb producer's declared pin.
-SOURCE_URL="https://github.com/keri-foundation/fortweb/releases/download/runtime-source-pyodide-314-hio-0.7.20-20260910/runtime-source.tar.gz"
-SOURCE_ARCHIVE_SHA256="394db70ecbed6e5718e6ec0afbcb43eaf6384e2ab78218e55067ec9e5d83fb34"
-SOURCE_MANIFEST_SHA256="371ef8cb8c6641b68afe6799931678435e2a629dcf4aa7ba2e344efab5a10f32"
+SOURCE_URL="https://github.com/keri-foundation/fortweb/releases/download/runtime-source-sedi-core-csp-20261107/runtime-source.tar.gz"
+SOURCE_ARCHIVE_SHA256="3618b16ee66aca5704d76310b792383f0a32260c2e774fd5e42f8b62e5f7dd9a"
+SOURCE_MANIFEST_SHA256="f76cf23f5cdaa5fe3f7a0e264c862290f9c8b6be2aafca6622926e1869731431"
 SOURCE_MANIFEST_REL="build/runtime-source/manifest.json"
 PACKAGE_REF="refs/heads/pyodide-314-runtime"
 

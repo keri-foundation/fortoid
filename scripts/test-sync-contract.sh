@@ -254,11 +254,11 @@ BUILDER_PLAN="$(bash "${BUILDER_SCRIPT}" --fortweb-dir /nonexistent-anywhere --p
 expect_contains "plan runs npm ci" "npm ci" "${BUILDER_PLAN}"
 expect_contains "plan acquires the reviewed runtime source" "acquire_runtime_source.py" "${BUILDER_PLAN}"
 expect_contains "plan pins the reviewed source URL" \
-  "runtime-source-pyodide-314-hio-0.7.20-20260910/runtime-source.tar.gz" "${BUILDER_PLAN}"
+  "runtime-source-sedi-core-csp-20261107/runtime-source.tar.gz" "${BUILDER_PLAN}"
 expect_contains "plan pins the archive digest" \
-  "394db70ecbed6e5718e6ec0afbcb43eaf6384e2ab78218e55067ec9e5d83fb34" "${BUILDER_PLAN}"
+  "3618b16ee66aca5704d76310b792383f0a32260c2e774fd5e42f8b62e5f7dd9a" "${BUILDER_PLAN}"
 expect_contains "plan pins the manifest digest" \
-  "371ef8cb8c6641b68afe6799931678435e2a629dcf4aa7ba2e344efab5a10f32" "${BUILDER_PLAN}"
+  "f76cf23f5cdaa5fe3f7a0e264c862290f9c8b6be2aafca6622926e1869731431" "${BUILDER_PLAN}"
 expect_contains "plan builds the runtime" "npm run build:runtime" "${BUILDER_PLAN}"
 expect_contains "plan packages the runtime" "npm run package:runtime" "${BUILDER_PLAN}"
 expect_contains "plan passes --runtime-dir" "--runtime-dir dist/runtime" "${BUILDER_PLAN}"

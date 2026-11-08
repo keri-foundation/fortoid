@@ -2,6 +2,11 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+val sediPhysicalTest = providers.gradleProperty("sediPhysicalTest").orNull
+require(sediPhysicalTest == null || sediPhysicalTest == "true") {
+    "sediPhysicalTest must be omitted or set to true"
+}
+
 android {
     namespace = "org.kerifoundation.fortandroid"
     compileSdk {
@@ -21,6 +26,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (sediPhysicalTest == "true") {
+                applicationIdSuffix = ".seditest"
+            }
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

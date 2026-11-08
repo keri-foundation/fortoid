@@ -94,7 +94,7 @@ jobs:
         id: runproof
         run: |
           ./gradlew :app:connectedDebugAndroidTest --no-daemon \
-            -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.MainActivityStartupProofTest
+            -Pandroid.testInstrumentationRunnerArguments.class=org.kerifoundation.fortandroid.MainActivityStartupProofTest,org.kerifoundation.fortandroid.TrustedAssetFallbackTest,org.kerifoundation.fortandroid.RuntimeEntrypointPolicyTest
 
       # Gate the JUnit verifier on the test step having actually run. When SDK
       # provisioning fails the test step is skipped, and an ungated verifier then
@@ -105,6 +105,14 @@ jobs:
           python3 tools/verify-junit-suite.py \
             --results-dir app/build/outputs/androidTest-results/connected \
             --suite org.kerifoundation.fortandroid.MainActivityStartupProofTest \
+            --tests 1
+          python3 tools/verify-junit-suite.py \
+            --results-dir app/build/outputs/androidTest-results/connected \
+            --suite org.kerifoundation.fortandroid.TrustedAssetFallbackTest \
+            --tests 1
+          python3 tools/verify-junit-suite.py \
+            --results-dir app/build/outputs/androidTest-results/connected \
+            --suite org.kerifoundation.fortandroid.RuntimeEntrypointPolicyTest \
             --tests 1
 
       - name: Capture startup diagnostics on failure

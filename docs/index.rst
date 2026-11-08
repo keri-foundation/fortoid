@@ -8,6 +8,7 @@ KERI Fort mobile application shell for Android.
    :caption: Contents
 
    testing/android-device-support
+   testing/sedi-core-android
 
 .. include:: ../README.md
    :parser: myst_parser.sphinx_
