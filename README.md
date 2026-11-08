@@ -88,14 +88,3 @@ appropriate CI artifact. Do not assume a downloadable release exists.
 ## Generated Payload Policy
 
 `app/src/main/assets/payload/` is generated and gitignored.
-
-## Deferred Work
-
-- Bridge contract generation
-- Runtime-origin contract injection
-- WebView host modernization (PR #22 reference)
-- Emulator acceptance testing
-
-## Relationship to PR #22
-
-PR #22 contains substantial wrapper work but predates the canonical `dist/runtime` pipeline. It serves as an implementation reference.
