@@ -605,7 +605,7 @@ class MainActivity : AppCompatActivity() {
         ): WebResourceResponse? {
             if (WebRequestPolicy.isTrustedPayloadUri(request.url)) {
                 val response = assetLoader.shouldInterceptRequest(request.url)
-                return response?.let { addCrossOriginIsolationHeaders(it) }
+                return response?.let { addCrossOriginIsolationHeaders(it) } ?: createBlockedSubresourceResponse()
             }
 
             val localPyodideUri = WebRequestPolicy.mapPyodideCdnToLocal(request.url)
